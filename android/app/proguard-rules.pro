@@ -27,3 +27,4 @@
 
 -dontwarn okio.**
 -dontwarn java.awt.**
+-dontwarn com.google.android.play.core.**

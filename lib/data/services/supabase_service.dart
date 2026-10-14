@@ -1565,6 +1565,176 @@ class SupabaseService {
   }
 
   // ==========================================
+  // 💼 SUPABASE MONTHLY SALARY AUTOMATION (EPF/ETF, BANK CREDIT, AUTO DCA)
+  // ==========================================
+  Future<Map<String, dynamic>?> processMonthlySalaryForSupabase({String? yearMonth}) async {
+    if (_client == null || !isAuthenticated) return null;
+
+    final targetYearMonth = (yearMonth != null && yearMonth.trim().isNotEmpty)
+        ? yearMonth.trim()
+        : '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}';
+
+    try {
+      final user = currentUser!;
+      final empList = await _client!
+          .from('employments')
+          .select()
+          .eq('user_id', user.id)
+          .order('start_date', ascending: false);
+
+      if ((empList as List).isEmpty) {
+        return {
+          'status': 'NO_EMPLOYMENT',
+          'message': 'No employment found to process salary',
+        };
+      }
+
+      final activeEmp = (empList as List).firstWhere(
+        (e) => (e['is_current'] == true || e['end_date'] == null),
+        orElse: () => empList.first,
+      );
+
+      final basicSalary = (activeEmp['basic_salary'] as num?)?.toDouble() ?? 0.0;
+      final fixedAllowance = (activeEmp['fixed_allowance'] as num?)?.toDouble() ?? 0.0;
+      final grossSalary = basicSalary + fixedAllowance;
+
+      final isProbation = activeEmp['is_probation'] == true;
+      final hasEpfDuringProbation = activeEmp['has_epf_etf_during_probation'] != false;
+      bool currentlyInProbation = false;
+
+      if (isProbation) {
+        final probEndStr = activeEmp['probation_end_date']?.toString();
+        if (probEndStr != null && probEndStr.isNotEmpty) {
+          final probEnd = DateTime.tryParse(probEndStr);
+          if (probEnd != null) {
+            currentlyInProbation = DateTime.now().isBefore(probEnd);
+          }
+        } else {
+          final startStr = activeEmp['start_date']?.toString();
+          final start = DateTime.tryParse(startStr ?? '');
+          final pMonths = (activeEmp['probation_months'] as num?)?.toInt() ?? 3;
+          if (start != null) {
+            final computedEnd = DateTime(start.year, start.month + pMonths, start.day);
+            currentlyInProbation = DateTime.now().isBefore(computedEnd);
+          } else {
+            currentlyInProbation = true;
+          }
+        }
+      }
+
+      final deductEpf = !(currentlyInProbation && !hasEpfDuringProbation);
+
+      final empEpf8 = deductEpf ? (basicSalary * 0.08) : 0.0;
+      final compEpf12 = deductEpf ? (basicSalary * 0.12) : 0.0;
+      final compEtf3 = deductEpf ? (basicSalary * 0.03) : 0.0;
+      final netTakeHome = grossSalary - empEpf8;
+
+      bool creditedToBank = false;
+      final bankData = await _client!
+          .from('bank_accounts')
+          .select()
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+      if (bankData != null && bankData['auto_credit_salary'] == true) {
+        final existingRecords = await _client!
+            .from('cash_records')
+            .select()
+            .eq('user_id', user.id)
+            .eq('year_month', targetYearMonth)
+            .eq('category', 'SALARY');
+
+        if ((existingRecords as List).isEmpty) {
+          final probationTag = currentlyInProbation
+              ? (hasEpfDuringProbation ? '[Probation + EPF]' : '[Probation - EPF Exempt]')
+              : '[Confirmed]';
+
+          await _client!.from('cash_records').insert({
+            'user_id': user.id,
+            'account_id': bankData['id'],
+            'type': 'INCOME',
+            'category': 'SALARY',
+            'amount': netTakeHome,
+            'record_date': DateTime.now().toIso8601String(),
+            'year_month': targetYearMonth,
+            'notes': 'Monthly Net Salary (${activeEmp['company_name']}) $probationTag | Gross: $grossSalary | EPF(8%): $empEpf8',
+            'source_employment_id': activeEmp['id'],
+            'is_auto_generated': true,
+          });
+
+          final allCashRecords = await _client!
+              .from('cash_records')
+              .select('type, amount')
+              .eq('user_id', user.id);
+
+          double newBal = (bankData['initial_balance'] as num?)?.toDouble() ?? 0.0;
+          for (final cr in allCashRecords as List) {
+            final a = (cr['amount'] as num?)?.toDouble() ?? 0.0;
+            final t = cr['type']?.toString().toUpperCase();
+            if (t == 'INCOME') {
+              newBal += a;
+            } else {
+              newBal -= a;
+            }
+          }
+
+          await _client!
+              .from('bank_accounts')
+              .update({'balance': newBal, 'updated_at': DateTime.now().toIso8601String()})
+              .eq('id', bankData['id']);
+
+          creditedToBank = true;
+        }
+      }
+
+      double allocatedDca = 0.0;
+      final profile = await _client!
+          .from('profiles')
+          .select('crypto_allocation_percentage')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final allocPct = (profile?['crypto_allocation_percentage'] as num?)?.toDouble() ?? 10.0;
+      if (allocPct > 0) {
+        final existingAlloc = await _client!
+            .from('salary_allocations')
+            .select()
+            .eq('user_id', user.id)
+            .eq('year_month', targetYearMonth)
+            .maybeSingle();
+
+        if (existingAlloc == null) {
+          allocatedDca = (netTakeHome * allocPct) / 100.0;
+          await _client!.from('salary_allocations').insert({
+            'user_id': user.id,
+            'year_month': targetYearMonth,
+            'salary_amount': netTakeHome,
+            'allocated_amount': allocatedDca,
+            'allocation_percentage': allocPct,
+            'notes': 'Auto DCA target allocation ($allocPct% of net salary)',
+          });
+        }
+      }
+
+      return {
+        'status': 'SUCCESS',
+        'message': 'Monthly salary processed successfully (Supabase Cloud)',
+        'yearMonth': targetYearMonth,
+        'netSalary': netTakeHome,
+        'grossSalary': grossSalary,
+        'employeeEpf': empEpf8,
+        'employerEpf': compEpf12,
+        'employerEtf': compEtf3,
+        'creditedToBank': creditedToBank,
+        'allocatedDca': allocatedDca,
+      };
+    } catch (e) {
+      debugPrint('[SupabaseService] processMonthlySalaryForSupabase error: $e');
+      return null;
+    }
+  }
+
+  // ==========================================
   // 🌐 LIVE CRYPTO PRICES WITH BINANCE FALLBACK
   // ==========================================
   Future<Map<String, dynamic>> _fetchLivePricesWithFallback(List<dynamic> holdings) async {

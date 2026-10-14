@@ -144,7 +144,11 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
       }
       return res;
     }
-    return null;
+    final res = await _service.processMonthlySalaryForSupabase(yearMonth: yearMonth);
+    if (res != null) {
+      await refresh();
+    }
+    return res;
   }
 }
 
