@@ -20,15 +20,17 @@ class CurrencyInfo {
 }
 
 class SupportedCurrencies {
-  static const usdt = CurrencyInfo(code: 'USDT', symbol: 'USDT', name: 'Tether (USDT)', rateToUsd: 1.0);
+  static const usdt = CurrencyInfo(code: 'USDT', symbol: 'USDT', name: 'Tether', rateToUsd: 1.0);
   static const usd = usdt; // Backward-compatibility alias
   static const lkr = CurrencyInfo(code: 'LKR', symbol: 'Rs ', name: 'Sri Lankan Rupee', rateToUsd: 305.0);
+  static const inr = CurrencyInfo(code: 'INR', symbol: '₹ ', name: 'Indian Rupee', rateToUsd: 83.5);
+  static const aed = CurrencyInfo(code: 'AED', symbol: 'AED ', name: 'UAE Dirham', rateToUsd: 3.67);
   static const eur = CurrencyInfo(code: 'EUR', symbol: '€ ', name: 'Euro', rateToUsd: 0.92);
   static const gbp = CurrencyInfo(code: 'GBP', symbol: '£ ', name: 'British Pound', rateToUsd: 0.78);
   static const aud = CurrencyInfo(code: 'AUD', symbol: 'A\$ ', name: 'Australian Dollar', rateToUsd: 1.52);
   static const cad = CurrencyInfo(code: 'CAD', symbol: 'C\$ ', name: 'Canadian Dollar', rateToUsd: 1.38);
 
-  static const List<CurrencyInfo> all = [usdt, lkr, eur, gbp, aud, cad];
+  static const List<CurrencyInfo> all = [usdt, lkr, inr, aed, eur, gbp, aud, cad];
 
   static CurrencyInfo fromCode(String code) {
     final upper = code.trim().toUpperCase();

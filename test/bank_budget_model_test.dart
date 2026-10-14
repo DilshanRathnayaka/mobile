@@ -86,8 +86,8 @@ void main() {
     test('MonthlyBudgetPlanModel calculates custom percentage allocations', () {
       final plan = MonthlyBudgetPlanModel.defaults();
       expect(plan.savingsPercentage, 20.0);
-      expect(plan.cryptoPercentage, 15.0);
-      expect(plan.otherInvestPercentage, 15.0);
+      expect(plan.cryptoPercentage, 0.0);
+      expect(plan.otherInvestPercentage, 30.0);
       expect(plan.expensesPercentage, 50.0);
 
       final updated = plan.copyWith(

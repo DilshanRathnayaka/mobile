@@ -113,5 +113,93 @@ void main() {
       expect(summary.totalEpfBalance, greaterThanOrEqualTo(240000.0));
       expect(summary.totalCareerMonths, greaterThanOrEqualTo(13));
     });
+
+    test('Probation period with EPF exempt gives 100% gross take-home and 0 EPF/ETF', () {
+      final probationJob = EmploymentModel(
+        id: 'job-probation-exempt',
+        userId: 'user-1',
+        companyName: 'Startup LK',
+        designation: 'Associate QA Engineer',
+        basicSalary: 100000.0,
+        fixedAllowance: 20000.0,
+        monthlySalary: 120000.0,
+        salaryDay: 25,
+        startDate: DateTime.now().subtract(const Duration(days: 45)), // 1.5 months into probation
+        endDate: null,
+        isCurrent: true,
+        isProbation: true,
+        probationMonths: 6,
+        hasEpfEtfDuringProbation: false,
+      );
+
+      expect(probationJob.isProbation, isTrue);
+      expect(probationJob.isInProbation(), isTrue);
+      expect(probationJob.isEpfApplicable(), isFalse);
+
+      // EPF & ETF are 0 because exempt
+      expect(probationJob.monthlyEmployeeEpf8, equals(0.0));
+      expect(probationJob.monthlyEmployerEpf12, equals(0.0));
+      expect(probationJob.monthlyEmployerEtf3, equals(0.0));
+      expect(probationJob.monthlyTotalEpf20, equals(0.0));
+
+      // Employee takes home full 100% gross pay (100,000 basic + 20,000 allowance = 120,000)
+      expect(probationJob.effectiveGrossSalary, equals(120000.0));
+      expect(probationJob.monthlyNetSalary, equals(120000.0));
+    });
+
+    test('Probation period with EPF enabled deducts EPF/ETF normally', () {
+      final probationWithEpf = EmploymentModel(
+        id: 'job-probation-with-epf',
+        userId: 'user-1',
+        companyName: 'Enterprise LK',
+        designation: 'Software Engineer',
+        basicSalary: 100000.0,
+        fixedAllowance: 20000.0,
+        monthlySalary: 120000.0,
+        salaryDay: 25,
+        startDate: DateTime.now().subtract(const Duration(days: 30)),
+        endDate: null,
+        isCurrent: true,
+        isProbation: true,
+        probationMonths: 6,
+        hasEpfEtfDuringProbation: true,
+      );
+
+      expect(probationWithEpf.isProbation, isTrue);
+      expect(probationWithEpf.isInProbation(), isTrue);
+      expect(probationWithEpf.isEpfApplicable(), isTrue);
+
+      // EPF applies to basic: 8% of 100,000 = 8,000
+      expect(probationWithEpf.monthlyEmployeeEpf8, equals(8000.0));
+      expect(probationWithEpf.monthlyEmployerEpf12, equals(12000.0));
+      expect(probationWithEpf.monthlyEmployerEtf3, equals(3000.0));
+      // Net pay = 120,000 - 8,000 = 112,000
+      expect(probationWithEpf.monthlyNetSalary, equals(112000.0));
+    });
+
+    test('Completed probation transitions back to standard EPF/ETF even if probation had EPF exempt', () {
+      final completedProbationJob = EmploymentModel(
+        id: 'job-probation-completed',
+        userId: 'user-1',
+        companyName: 'FinTech LK',
+        designation: 'Senior Developer',
+        basicSalary: 150000.0,
+        monthlySalary: 150000.0,
+        salaryDay: 25,
+        startDate: DateTime.now().subtract(const Duration(days: 240)), // ~8 months ago
+        endDate: null,
+        isCurrent: true,
+        isProbation: true,
+        probationMonths: 6, // ended at 6 months (~180 days)
+        hasEpfEtfDuringProbation: false,
+      );
+
+      // Probation period has passed
+      expect(completedProbationJob.isInProbation(), isFalse);
+      // So EPF is now applicable
+      expect(completedProbationJob.isEpfApplicable(), isTrue);
+      expect(completedProbationJob.monthlyEmployeeEpf8, equals(12000.0)); // 8% of 150,000
+      expect(completedProbationJob.monthlyNetSalary, equals(138000.0)); // 150,000 - 12,000
+    });
   });
 }

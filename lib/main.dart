@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/constants/app_backend_config.dart';
 import 'core/constants/supabase_config.dart';
 import 'core/storage/secure_local_storage.dart';
 import 'core/theme/app_theme.dart';
+import 'data/services/spring_boot_service.dart';
 import 'providers/security_provider.dart';
 import 'providers/session_provider.dart';
 import 'providers/theme_provider.dart';
@@ -13,8 +15,14 @@ import 'screens/main_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await purgeLegacyFinancialLocalStorage();
 
-  if (SupabaseConfig.isConfigured) {
+  if (AppBackendConfig.isSpringBoot) {
+    debugPrint('[AppBackendConfig] Active Backend: SPRING BOOT (${AppBackendConfig.springBootBaseUrl})');
+    final sbService = SpringBootService();
+    await sbService.init();
+  } else if (SupabaseConfig.isConfigured) {
+    debugPrint('[AppBackendConfig] Active Backend: SUPABASE (${SupabaseConfig.supabaseUrl})');
     try {
       await Supabase.initialize(
         url: SupabaseConfig.supabaseUrl,
@@ -50,8 +58,8 @@ class _CryptoAssetManagerAppState extends ConsumerState<CryptoAssetManagerApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // Listen to Supabase auth state transitions
-    if (SupabaseConfig.isConfigured) {
+    // Listen to Supabase auth state transitions only when Supabase is active
+    if (AppBackendConfig.isSupabase && SupabaseConfig.isConfigured) {
       try {
         Supabase.instance.client.auth.onAuthStateChange.listen((data) {
           if (data.event == AuthChangeEvent.signedOut) {

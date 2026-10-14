@@ -5,6 +5,7 @@ import '../core/utils/formatters.dart';
 import '../data/models/salary_report_model.dart';
 import '../providers/currency_provider.dart';
 import '../providers/portfolio_provider.dart';
+import '../widgets/skeleton_loading.dart';
 
 class SalaryDcaScreen extends ConsumerWidget {
   const SalaryDcaScreen({super.key});
@@ -33,7 +34,7 @@ class SalaryDcaScreen extends ConsumerWidget {
         ),
       ),
       body: salaryReportAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        loading: () => const SalaryDcaSkeleton(),
         error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: AppColors.loss))),
         data: (report) {
           final recommendedDca = report.userSalary * (report.targetAllocationPercent / 100);

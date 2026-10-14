@@ -68,5 +68,10 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Authenticate securely with Face ID or Touch ID to unlock your financial dashboard.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

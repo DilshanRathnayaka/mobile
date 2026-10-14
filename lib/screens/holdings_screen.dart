@@ -6,6 +6,8 @@ import '../providers/currency_provider.dart';
 import '../providers/portfolio_provider.dart';
 import 'transactions_history_screen.dart';
 import 'position_detail_screen.dart';
+import '../widgets/realtime_status_badge.dart';
+import '../widgets/skeleton_loading.dart';
 
 class HoldingsScreen extends ConsumerWidget {
   const HoldingsScreen({super.key});
@@ -29,9 +31,19 @@ class HoldingsScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: bgColor,
         elevation: 0,
-        title: Text(
-          'Positions & DCA Performance',
-          style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                'Positions & DCA Performance',
+                style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const RealtimeStatusBadge(size: 6),
+          ],
         ),
         actions: [
           IconButton(
@@ -47,10 +59,14 @@ class HoldingsScreen extends ConsumerWidget {
         ],
       ),
       body: portfolioAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        loading: () => const HoldingsSkeleton(),
         error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: AppColors.loss))),
         data: (portfolio) {
-          if (portfolio.holdings.isEmpty) {
+          final activeHoldings = portfolio.holdings
+              .where((h) => h.totalQuantity > 0.00000001)
+              .toList();
+
+          if (activeHoldings.isEmpty) {
             return Center(
               child: Text('No positions found. Add your first DCA buy!', style: TextStyle(color: textSecondary)),
             );
@@ -58,9 +74,9 @@ class HoldingsScreen extends ConsumerWidget {
 
           return ListView.builder(
             padding: const EdgeInsets.all(16),
-            itemCount: portfolio.holdings.length,
+            itemCount: activeHoldings.length,
             itemBuilder: (context, index) {
-              final h = portfolio.holdings[index];
+              final h = activeHoldings[index];
               final isProfit = h.unrealizedPnl >= 0;
 
               return InkWell(

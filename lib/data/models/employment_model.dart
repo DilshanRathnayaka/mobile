@@ -13,6 +13,12 @@ class EmploymentModel {
   final String notes;
   final String currency;
 
+  // 📝 Probation Period Settings
+  final bool isProbation; // Whether a probation period applies
+  final int probationMonths; // e.g. 3 or 6 months
+  final DateTime? probationEndDate; // Optional explicit probation end date
+  final bool hasEpfEtfDuringProbation; // true = EPF/ETF paid during probation; false = exempt during probation
+
   const EmploymentModel({
     required this.id,
     required this.userId,
@@ -27,11 +33,33 @@ class EmploymentModel {
     this.isCurrent = true,
     this.notes = '',
     this.currency = 'LKR',
+    this.isProbation = false,
+    this.probationMonths = 3,
+    this.probationEndDate,
+    this.hasEpfEtfDuringProbation = true,
   });
 
   bool get isResigned => endDate != null || !isCurrent;
 
   DateTime get effectiveEndDate => endDate ?? DateTime.now();
+
+  /// Effective probation end date
+  DateTime get effectiveProbationEndDate =>
+      probationEndDate ??
+      DateTime(startDate.year, startDate.month + probationMonths, startDate.day);
+
+  /// Checks if employee is currently in probation as of a specific date
+  bool isInProbation([DateTime? asOfDate]) {
+    if (!isProbation) return false;
+    final date = asOfDate ?? DateTime.now();
+    return date.isBefore(effectiveProbationEndDate);
+  }
+
+  /// Whether EPF/ETF is currently applicable
+  bool isEpfApplicable([DateTime? asOfDate]) {
+    if (!isInProbation(asOfDate)) return true; // Confirmed employees always have EPF/ETF
+    return hasEpfEtfDuringProbation;
+  }
 
   /// Effective basic salary for EPF/ETF statutory deductions
   double get effectiveBasicSalary => basicSalary > 0
@@ -79,29 +107,72 @@ class EmploymentModel {
   }
 
   /// Sri Lankan Legal EPF & ETF Breakdown:
-  /// Employee EPF: 8% (Deducted from basic pay)
-  double get monthlyEmployeeEpf8 => effectiveBasicSalary * 0.08;
+  /// Employee EPF: 8% (Deducted from basic pay) - 0 if during probation and not applicable
+  double get monthlyEmployeeEpf8 => isEpfApplicable() ? (effectiveBasicSalary * 0.08) : 0.0;
 
-  /// Employer EPF: 12% (Paid by company on basic pay)
-  double get monthlyEmployerEpf12 => effectiveBasicSalary * 0.12;
+  /// Employer EPF: 12% (Paid by company on basic pay) - 0 if during probation and not applicable
+  double get monthlyEmployerEpf12 => isEpfApplicable() ? (effectiveBasicSalary * 0.12) : 0.0;
 
   /// Total Monthly EPF: 20% (Accumulated in CBSL Fund)
-  double get monthlyTotalEpf20 => effectiveBasicSalary * 0.20;
+  double get monthlyTotalEpf20 => isEpfApplicable() ? (effectiveBasicSalary * 0.20) : 0.0;
 
   /// Employer ETF: 3% (Paid by company to ETF Board on basic pay)
-  double get monthlyEmployerEtf3 => effectiveBasicSalary * 0.03;
+  double get monthlyEmployerEtf3 => isEpfApplicable() ? (effectiveBasicSalary * 0.03) : 0.0;
 
   /// Net Take-Home Salary credited to bank: (Gross - 8% Employee EPF)
-  /// e.g. Basic 80,000 + Allowance 10,000 = Gross 90,000 - 6,400 (8% EPF) = Rs. 83,600.00
+  /// e.g. If EPF exempt in probation: full gross. If confirmed: Gross - 8% EPF.
   double get monthlyNetSalary => effectiveGrossSalary - monthlyEmployeeEpf8;
+
+  /// Number of probation months completed (capped at monthsWorked)
+  int get completedProbationMonths {
+    if (!isProbation) return 0;
+    return probationMonths.clamp(0, monthsWorked);
+  }
+
+  int get confirmedMonths {
+    if (!isProbation) return monthsWorked;
+    return (monthsWorked - completedProbationMonths).clamp(0, monthsWorked);
+  }
 
   /// Cumulative lifetime totals for this job
   double get lifetimeGrossEarned => monthsWorked * effectiveGrossSalary;
-  double get lifetimeEmployeeEpf => monthsWorked * monthlyEmployeeEpf8;
-  double get lifetimeEmployerEpf => monthsWorked * monthlyEmployerEpf12;
-  double get lifetimeTotalEpf => monthsWorked * monthlyTotalEpf20;
-  double get lifetimeEmployerEtf => monthsWorked * monthlyEmployerEtf3;
-  double get lifetimeNetSalary => monthsWorked * monthlyNetSalary;
+
+  double get lifetimeEmployeeEpf {
+    if (hasEpfEtfDuringProbation || !isProbation) {
+      return monthsWorked * (effectiveBasicSalary * 0.08);
+    }
+    return confirmedMonths * (effectiveBasicSalary * 0.08);
+  }
+
+  double get lifetimeEmployerEpf {
+    if (hasEpfEtfDuringProbation || !isProbation) {
+      return monthsWorked * (effectiveBasicSalary * 0.12);
+    }
+    return confirmedMonths * (effectiveBasicSalary * 0.12);
+  }
+
+  double get lifetimeTotalEpf {
+    if (hasEpfEtfDuringProbation || !isProbation) {
+      return monthsWorked * (effectiveBasicSalary * 0.20);
+    }
+    return confirmedMonths * (effectiveBasicSalary * 0.20);
+  }
+
+  double get lifetimeEmployerEtf {
+    if (hasEpfEtfDuringProbation || !isProbation) {
+      return monthsWorked * (effectiveBasicSalary * 0.03);
+    }
+    return confirmedMonths * (effectiveBasicSalary * 0.03);
+  }
+
+  double get lifetimeNetSalary {
+    if (hasEpfEtfDuringProbation || !isProbation) {
+      return monthsWorked * (effectiveGrossSalary - (effectiveBasicSalary * 0.08));
+    }
+    final probationGross = completedProbationMonths * effectiveGrossSalary;
+    final confirmedNet = confirmedMonths * (effectiveGrossSalary - (effectiveBasicSalary * 0.08));
+    return probationGross + confirmedNet;
+  }
 
   /// Days until the next salary payout date
   int? get daysUntilNextSalary {
@@ -111,7 +182,6 @@ class EmploymentModel {
     DateTime payDate = DateTime(now.year, now.month, salaryDay.clamp(1, 28));
 
     if (payDate.isBefore(DateTime(now.year, now.month, now.day))) {
-      // Salary for this month already paid; next salary is next month
       payDate = DateTime(now.year, now.month + 1, salaryDay.clamp(1, 28));
     }
 
@@ -132,6 +202,10 @@ class EmploymentModel {
         'is_current': isCurrent,
         'notes': notes,
         'currency': currency,
+        'is_probation': isProbation,
+        'probation_months': probationMonths,
+        'probation_end_date': probationEndDate?.toIso8601String().split('T').first,
+        'has_epf_etf_during_probation': hasEpfEtfDuringProbation,
       };
 
   factory EmploymentModel.fromJson(Map<String, dynamic> json) {
@@ -140,6 +214,13 @@ class EmploymentModel {
     final rawGross = (json['monthly_salary'] as num?)?.toDouble() ?? (bSalary + allowance);
     final finalBasic = bSalary > 0 ? bSalary : (rawGross - allowance > 0 ? rawGross - allowance : rawGross);
     final finalGross = (bSalary > 0 || allowance > 0) ? (finalBasic + allowance) : rawGross;
+
+    final isProb = (json['is_probation'] as bool?) ?? (json['isProbation'] as bool?) ?? false;
+    final probMonths = (json['probation_months'] as num?)?.toInt() ?? (json['probationMonths'] as num?)?.toInt() ?? 3;
+    final probEndDateStr = json['probation_end_date']?.toString() ?? json['probationEndDate']?.toString();
+    final hasEpfProb = (json['has_epf_etf_during_probation'] as bool?) ??
+        (json['hasEpfEtfDuringProbation'] as bool?) ??
+        true;
 
     return EmploymentModel(
       id: json['id']?.toString() ?? '',
@@ -155,6 +236,10 @@ class EmploymentModel {
       isCurrent: (json['is_current'] as bool?) ?? (json['end_date'] == null),
       notes: json['notes']?.toString() ?? '',
       currency: json['currency']?.toString() ?? 'LKR',
+      isProbation: isProb,
+      probationMonths: probMonths,
+      probationEndDate: probEndDateStr != null ? DateTime.tryParse(probEndDateStr) : null,
+      hasEpfEtfDuringProbation: hasEpfProb,
     );
   }
 
@@ -172,6 +257,10 @@ class EmploymentModel {
     bool? isCurrent,
     String? notes,
     String? currency,
+    bool? isProbation,
+    int? probationMonths,
+    DateTime? probationEndDate,
+    bool? hasEpfEtfDuringProbation,
   }) {
     return EmploymentModel(
       id: id ?? this.id,
@@ -187,6 +276,10 @@ class EmploymentModel {
       isCurrent: isCurrent ?? this.isCurrent,
       notes: notes ?? this.notes,
       currency: currency ?? this.currency,
+      isProbation: isProbation ?? this.isProbation,
+      probationMonths: probationMonths ?? this.probationMonths,
+      probationEndDate: probationEndDate ?? this.probationEndDate,
+      hasEpfEtfDuringProbation: hasEpfEtfDuringProbation ?? this.hasEpfEtfDuringProbation,
     );
   }
 }

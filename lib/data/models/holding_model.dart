@@ -46,6 +46,38 @@ class HoldingModel {
       realizedPnl: (json['realizedPnl'] as num?)?.toDouble() ?? 0.0,
     );
   }
+
+  HoldingModel copyWith({
+    String? id,
+    String? coinId,
+    String? symbol,
+    String? name,
+    double? totalQuantity,
+    double? averageBuyPrice,
+    double? currentPrice,
+    double? change24h,
+    double? totalInvestedCost,
+    double? currentValue,
+    double? unrealizedPnl,
+    double? unrealizedPnlPercentage,
+    double? realizedPnl,
+  }) {
+    return HoldingModel(
+      id: id ?? this.id,
+      coinId: coinId ?? this.coinId,
+      symbol: symbol ?? this.symbol,
+      name: name ?? this.name,
+      totalQuantity: totalQuantity ?? this.totalQuantity,
+      averageBuyPrice: averageBuyPrice ?? this.averageBuyPrice,
+      currentPrice: currentPrice ?? this.currentPrice,
+      change24h: change24h ?? this.change24h,
+      totalInvestedCost: totalInvestedCost ?? this.totalInvestedCost,
+      currentValue: currentValue ?? this.currentValue,
+      unrealizedPnl: unrealizedPnl ?? this.unrealizedPnl,
+      unrealizedPnlPercentage: unrealizedPnlPercentage ?? this.unrealizedPnlPercentage,
+      realizedPnl: realizedPnl ?? this.realizedPnl,
+    );
+  }
 }
 
 class AssetAllocation {

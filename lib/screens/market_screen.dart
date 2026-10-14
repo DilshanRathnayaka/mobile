@@ -7,6 +7,9 @@ import '../providers/binance_provider.dart';
 import '../providers/currency_provider.dart';
 import 'add_transaction_screen.dart';
 import 'profit_calculator_screen.dart';
+import 'crypto_intelligence_screen.dart';
+import '../widgets/realtime_status_badge.dart';
+import '../widgets/skeleton_loading.dart';
 
 class MarketScreen extends ConsumerStatefulWidget {
   const MarketScreen({super.key});
@@ -37,27 +40,26 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
       appBar: AppBar(
         backgroundColor: bgColor,
         elevation: 0,
+        titleSpacing: 16,
         title: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.primaryGlow,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.candlestick_chart, color: AppColors.primary, size: 18),
-                  SizedBox(width: 6),
-                  Text('Binance', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 13)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
             Text('Markets', style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+            const RealtimeStatusBadge(size: 6),
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Market Wire & News',
+            icon: const Icon(Icons.bolt_rounded, color: Color(0xFF00E676), size: 24),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CryptoIntelligenceScreen()),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Profit & ROI Calculator',
             icon: const Icon(Icons.calculate_outlined, color: AppColors.primary, size: 24),
@@ -123,7 +125,7 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
           // 3. Tickers List
           Expanded(
             child: tickersAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+              loading: () => const MarketSkeleton(),
               error: (err, _) => Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

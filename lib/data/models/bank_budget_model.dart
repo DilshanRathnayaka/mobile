@@ -193,12 +193,16 @@ class MonthlyBudgetPlanModel {
     this.notes = '',
   });
 
+  double get needsPercentage => expensesPercentage;
+  double get wantsPercentage => otherInvestPercentage;
+  double get savingsBufferPercentage => savingsPercentage;
+
   factory MonthlyBudgetPlanModel.defaults({String userId = ''}) => MonthlyBudgetPlanModel(
         id: '',
         userId: userId,
         savingsPercentage: 20.0,
-        cryptoPercentage: 15.0,
-        otherInvestPercentage: 15.0,
+        cryptoPercentage: 0.0,
+        otherInvestPercentage: 30.0,
         expensesPercentage: 50.0,
         emergencyFundTarget: 500000.0,
       );

@@ -1,6 +1,4 @@
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/cashflow_model.dart';
 import '../data/services/supabase_service.dart';
 import 'portfolio_provider.dart';
@@ -12,7 +10,6 @@ final cashflowProvider =
 });
 
 class CashflowNotifier extends StateNotifier<CashflowSummary> {
-  static const _prefKey = 'user_cashflow_records';
   final SupabaseService _supabaseService;
   final Ref _ref;
 
@@ -21,39 +18,51 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
   }
 
   Future<void> _loadCashflow() async {
-    // 1. Prioritize Supabase cloud database as source of truth
+    // Cloud database is the sole source of truth for user financial data
     try {
       final cloudItems = await _supabaseService.getCashflowRecords();
-      if (cloudItems.isNotEmpty) {
-        _recalculate(cloudItems, syncToCloud: false);
-        return;
-      }
-    } catch (_) {}
-
-    // 2. Offline fallback to local SharedPreferences
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getStringList(_prefKey);
-
-      List<CashflowItem> list = [];
-      if (raw != null && raw.isNotEmpty) {
-        list = raw.map((str) => CashflowItem.fromJson(jsonDecode(str))).toList();
-        list.sort((a, b) => b.date.compareTo(a.date));
-        _recalculate(list, syncToCloud: false);
-      }
-    } catch (_) {}
+      _recalculate(cloudItems);
+    } catch (_) {
+      _recalculate([]);
+    }
   }
 
-  void _recalculate(List<CashflowItem> list, {bool syncToCloud = false}) {
+  void _recalculate(List<CashflowItem> list) {
     double deposits = 0;
     double withdrawals = 0;
+
+    double p2pDepUsdt = 0;
+    double p2pDepLocal = 0;
+    double p2pWdUsdt = 0;
+    double p2pWdLocal = 0;
+    int p2pCount = 0;
 
     for (final item in list) {
       if (item.type == 'DEPOSIT') {
         deposits += item.amount;
+        if (item.isP2P) {
+          p2pDepUsdt += item.amount;
+          p2pDepLocal += item.effectiveLocalAmount;
+          p2pCount++;
+        }
       } else {
         withdrawals += item.amount;
+        if (item.isP2P) {
+          p2pWdUsdt += item.amount;
+          p2pWdLocal += item.effectiveLocalAmount;
+          p2pCount++;
+        }
       }
+    }
+
+    final avgBuy = p2pDepUsdt > 0 ? (p2pDepLocal / p2pDepUsdt) : 0.0;
+    final avgSell = p2pWdUsdt > 0 ? (p2pWdLocal / p2pWdUsdt) : 0.0;
+    
+    // Merchant spread profit: if sold at higher rate than bought on matched volume
+    double merchantProfit = 0.0;
+    if (avgBuy > 0 && avgSell > 0) {
+      final matchedVolume = p2pDepUsdt < p2pWdUsdt ? p2pDepUsdt : p2pWdUsdt;
+      merchantProfit = matchedVolume * (avgSell - avgBuy);
     }
 
     state = CashflowSummary(
@@ -61,17 +70,15 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
       totalWithdrawn: withdrawals,
       netCapital: deposits - withdrawals,
       items: list,
+      totalP2pDepositedUsdt: p2pDepUsdt,
+      totalP2pDepositedLocal: p2pDepLocal,
+      avgP2pBuyRate: avgBuy,
+      totalP2pWithdrawnUsdt: p2pWdUsdt,
+      totalP2pWithdrawnLocal: p2pWdLocal,
+      avgP2pSellRate: avgSell,
+      p2pNetProfitLocal: merchantProfit,
+      p2pTradeCount: p2pCount,
     );
-
-    _saveLocal(list);
-  }
-
-  Future<void> _saveLocal(List<CashflowItem> list) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = list.map((item) => jsonEncode(item.toJson())).toList();
-      await prefs.setStringList(_prefKey, raw);
-    } catch (_) {}
   }
 
   Future<void> addRecord({
@@ -80,8 +87,12 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
     required String category,
     required DateTime date,
     String notes = '',
+    bool isP2P = false,
+    double? p2pRate,
+    String? localCurrency,
+    double? localAmount,
   }) async {
-    // 1. Persist directly to Supabase cloud database
+    // 1. Persist directly to cloud database (strictly scoped by active user)
     CashflowItem? cloudItem;
     try {
       cloudItem = await _supabaseService.addCashflowRecord(
@@ -90,6 +101,10 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
         category: category,
         date: date,
         notes: notes,
+        isP2P: isP2P,
+        p2pRate: p2pRate,
+        localCurrency: localCurrency,
+        localAmount: localAmount,
       );
     } catch (_) {}
 
@@ -101,6 +116,10 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
           category: category,
           date: date,
           notes: notes,
+          isP2P: isP2P,
+          p2pRate: p2pRate,
+          localCurrency: localCurrency,
+          localAmount: localAmount,
         );
 
     final updated = [newItem, ...state.items];
@@ -120,8 +139,12 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
     required String category,
     required DateTime date,
     String notes = '',
+    bool isP2P = false,
+    double? p2pRate,
+    String? localCurrency,
+    double? localAmount,
   }) async {
-    // 1. Sync update to Supabase
+    // 1. Sync update to cloud database
     try {
       await _supabaseService.updateCashflowRecord(
         id: id,
@@ -130,6 +153,10 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
         category: category,
         date: date,
         notes: notes,
+        isP2P: isP2P,
+        p2pRate: p2pRate,
+        localCurrency: localCurrency,
+        localAmount: localAmount,
       );
     } catch (_) {}
 
@@ -141,6 +168,10 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
           category: category,
           date: date,
           notes: notes,
+          isP2P: isP2P,
+          p2pRate: p2pRate,
+          localCurrency: localCurrency,
+          localAmount: localAmount,
         );
       }
       return item;
@@ -155,7 +186,7 @@ class CashflowNotifier extends StateNotifier<CashflowSummary> {
   }
 
   Future<void> deleteRecord(String id) async {
-    // 1. Sync deletion to Supabase
+    // 1. Sync deletion to cloud database
     try {
       await _supabaseService.deleteCashflowRecord(id);
     } catch (_) {}

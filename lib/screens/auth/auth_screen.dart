@@ -282,6 +282,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       }
 
       if (mounted) {
+        resetUserSessionState(ref);
         await _check2FaAndProceed();
       }
     } catch (e) {

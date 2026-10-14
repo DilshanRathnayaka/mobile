@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/constants/app_backend_config.dart';
 import '../data/models/employment_model.dart';
 import '../data/services/supabase_service.dart';
 import 'portfolio_provider.dart';
@@ -38,6 +39,10 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
     bool isCurrent = true,
     String notes = '',
     String currency = 'LKR',
+    bool isProbation = false,
+    int probationMonths = 3,
+    DateTime? probationEndDate,
+    bool hasEpfEtfDuringProbation = true,
   }) async {
     final newItem = await _service.addEmployment(
       companyName: companyName,
@@ -51,6 +56,10 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
       isCurrent: isCurrent,
       notes: notes,
       currency: currency,
+      isProbation: isProbation,
+      probationMonths: probationMonths,
+      probationEndDate: probationEndDate,
+      hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
     );
 
     if (newItem != null) {
@@ -73,6 +82,10 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
     required bool isCurrent,
     String notes = '',
     String currency = 'LKR',
+    bool isProbation = false,
+    int probationMonths = 3,
+    DateTime? probationEndDate,
+    bool hasEpfEtfDuringProbation = true,
   }) async {
     final success = await _service.updateEmployment(
       id: id,
@@ -87,6 +100,10 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
       isCurrent: isCurrent,
       notes: notes,
       currency: currency,
+      isProbation: isProbation,
+      probationMonths: probationMonths,
+      probationEndDate: probationEndDate,
+      hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
     );
 
     if (success) {
@@ -116,6 +133,18 @@ class EmploymentNotifier extends StateNotifier<AsyncValue<List<EmploymentModel>>
       await refresh();
     }
     return success;
+  }
+
+  /// Triggers backend monthly salary processing (probation, EPF/ETF, bank credit, DCA)
+  Future<Map<String, dynamic>?> processMonthlySalary({String? yearMonth}) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final res = await _service.springBootService.triggerMonthlySalaryProcessing(yearMonth: yearMonth);
+      if (res != null) {
+        await refresh();
+      }
+      return res;
+    }
+    return null;
   }
 }
 

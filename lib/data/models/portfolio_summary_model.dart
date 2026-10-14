@@ -30,16 +30,19 @@ class PortfolioSummaryModel {
     final unalloc = (json['unallocatedUsdt'] as num?)?.toDouble() ?? 0.0;
     final netVal = (json['netPortfolioValue'] as num?)?.toDouble() ?? (curVal + unalloc);
 
+    final rawHoldings = (json['holdings'] as List<dynamic>? ?? [])
+        .map((h) => HoldingModel.fromJson(h))
+        .where((h) => h.totalQuantity > 0.00000001)
+        .toList();
+
     return PortfolioSummaryModel(
       totalInvested: (json['totalInvested'] as num?)?.toDouble() ?? 0.0,
       currentValue: curVal,
       unrealizedPnl: (json['unrealizedPnl'] as num?)?.toDouble() ?? 0.0,
       unrealizedPnlPercentage: (json['unrealizedPnlPercentage'] as num?)?.toDouble() ?? 0.0,
       realizedPnl: (json['realizedPnl'] as num?)?.toDouble() ?? 0.0,
-      coinsCount: json['coinsCount'] ?? 0,
-      holdings: (json['holdings'] as List<dynamic>? ?? [])
-          .map((h) => HoldingModel.fromJson(h))
-          .toList(),
+      coinsCount: rawHoldings.length,
+      holdings: rawHoldings,
       allocations: (json['allocations'] as List<dynamic>? ?? [])
           .map((a) => AssetAllocation.fromJson(a))
           .toList(),
@@ -60,6 +63,32 @@ class PortfolioSummaryModel {
       allocations: [],
       unallocatedUsdt: 0,
       netPortfolioValue: 0,
+    );
+  }
+
+  PortfolioSummaryModel copyWith({
+    double? totalInvested,
+    double? currentValue,
+    double? unrealizedPnl,
+    double? unrealizedPnlPercentage,
+    double? realizedPnl,
+    int? coinsCount,
+    List<HoldingModel>? holdings,
+    List<AssetAllocation>? allocations,
+    double? unallocatedUsdt,
+    double? netPortfolioValue,
+  }) {
+    return PortfolioSummaryModel(
+      totalInvested: totalInvested ?? this.totalInvested,
+      currentValue: currentValue ?? this.currentValue,
+      unrealizedPnl: unrealizedPnl ?? this.unrealizedPnl,
+      unrealizedPnlPercentage: unrealizedPnlPercentage ?? this.unrealizedPnlPercentage,
+      realizedPnl: realizedPnl ?? this.realizedPnl,
+      coinsCount: coinsCount ?? this.coinsCount,
+      holdings: holdings ?? this.holdings,
+      allocations: allocations ?? this.allocations,
+      unallocatedUsdt: unallocatedUsdt ?? this.unallocatedUsdt,
+      netPortfolioValue: netPortfolioValue ?? this.netPortfolioValue,
     );
   }
 }

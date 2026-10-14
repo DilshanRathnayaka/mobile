@@ -1,13 +1,18 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../core/constants/app_colors.dart';
 import '../core/utils/export_service.dart';
 import '../core/utils/formatters.dart';
 import '../data/models/holding_model.dart';
+import '../data/models/portfolio_summary_model.dart';
 import '../data/models/transaction_model.dart';
 import '../providers/currency_provider.dart';
 import '../providers/portfolio_provider.dart';
+import '../widgets/realtime_status_badge.dart';
+import '../widgets/skeleton_loading.dart';
 
 class AnalyticsScreen extends ConsumerStatefulWidget {
   const AnalyticsScreen({super.key});
@@ -19,6 +24,7 @@ class AnalyticsScreen extends ConsumerStatefulWidget {
 class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   String _selectedRange = '30D';
   int _touchedPieIndex = -1;
+  String _assetFilter = 'ALL'; // 'ALL', 'PROFIT', 'DRAWDOWN', 'TOP_WEIGHT'
 
   @override
   Widget build(BuildContext context) {
@@ -40,9 +46,19 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
       appBar: AppBar(
         backgroundColor: bgColor,
         elevation: 0,
-        title: Text(
-          'Financial Reports & KPIs',
-          style: TextStyle(color: textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                'Financial Reports & KPIs',
+                style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const RealtimeStatusBadge(size: 6),
+          ],
         ),
         actions: [
           IconButton(
@@ -59,7 +75,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         ],
       ),
       body: portfolioAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        loading: () => const AnalyticsSkeleton(),
         error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: AppColors.loss))),
         data: (portfolio) {
           final txList = txAsync.asData?.value ?? [];
@@ -108,11 +124,23 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
               ),
               const SizedBox(height: 20),
 
-              // 4. Asset Allocation Pie Chart (Capital Weighting)
+              // 4. Quant Risk & Return KPI Ratios (Sharpe Ratio, Profit Factor, MDD, Fee Drag)
+              _buildRiskRatiosStrip(context, portfolio, txList, totalFees),
+              const SizedBox(height: 20),
+
+              // 5. DCA Execution Quality & Alpha Radar
+              _buildDcaAlphaRadar(context, portfolio, txList),
+              const SizedBox(height: 20),
+
+              // 6. Capital Milestone Roadmap
+              _buildMilestoneRoadmapCard(context, portfolio),
+              const SizedBox(height: 20),
+
+              // 7. Asset Allocation Pie Chart (Capital Weighting)
               _buildAllocationCard(context, portfolio),
               const SizedBox(height: 20),
 
-              // 5. Profit / Loss Breakdown Summary
+              // 8. Profit / Loss Breakdown Summary
               Row(
                 children: [
                   Expanded(
@@ -138,105 +166,8 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
               ),
               const SizedBox(height: 20),
 
-              // 6. Comprehensive Asset-by-Asset Performance Table
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: surfaceColor,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: borderColor),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Asset Performance Summary', style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold)),
-                        Text('${portfolio.holdings.length} Assets', style: TextStyle(color: textSecondary, fontSize: 12)),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    if (portfolio.holdings.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Text('No active asset positions to analyze', style: TextStyle(color: textMuted)),
-                        ),
-                      )
-                    else
-                      ...portfolio.holdings.map((h) {
-                        final isProf = h.unrealizedPnl >= 0;
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: surfaceLight,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: borderColor.withAlpha(50)),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(h.symbol, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 14)),
-                                        const SizedBox(width: 6),
-                                        Expanded(
-                                          child: Text(
-                                            h.name,
-                                            style: TextStyle(color: textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 3),
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        'DCA Avg: ${Formatters.currency(h.averageBuyPrice, currency)} • Now: ${Formatters.currency(h.currentPrice, currency)}',
-                                        style: TextStyle(color: textMuted, fontSize: 11),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    Formatters.currency(h.unrealizedPnl, currency),
-                                    style: TextStyle(color: isProf ? AppColors.profit : AppColors.loss, fontWeight: FontWeight.bold, fontSize: 14),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: isProf ? AppColors.profitBg : AppColors.lossBg,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      Formatters.percentage(h.unrealizedPnlPercentage),
-                                      style: TextStyle(color: isProf ? AppColors.profit : AppColors.loss, fontSize: 10, fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                  ],
-                ),
-              ),
+              // 9. Comprehensive Asset-by-Asset Performance Table with Filters
+              _buildAssetPerformanceSection(context, portfolio, surfaceColor, surfaceLight, borderColor, textPrimary, textSecondary, textMuted, currency),
             ],
           );
         },
@@ -284,7 +215,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   }
 
   // 2. Line Chart of Equity Curve (Constructed from Real Transaction Dates)
-  Widget _buildTrendLineChart(BuildContext context, dynamic portfolio, bool isDark, List<TransactionModel> txList) {
+  Widget _buildTrendLineChart(BuildContext context, PortfolioSummaryModel portfolio, bool isDark, List<TransactionModel> txList) {
     final surfaceColor = AppColors.surface(context);
     final borderColor = AppColors.border(context);
     final textPrimary = AppColors.textPrimary(context);
@@ -292,7 +223,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     final textMuted = AppColors.textMuted(context);
     final currency = ref.watch(currencyProvider);
 
-    final currentValue = portfolio.currentValue as double;
+    final currentValue = portfolio.currentValue;
 
     // Filter transactions chronologically by selected timeframe
     final now = DateTime.now();
@@ -674,7 +605,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   }
 
   // 4. Asset Allocation Card
-  Widget _buildAllocationCard(BuildContext context, dynamic portfolio) {
+  Widget _buildAllocationCard(BuildContext context, PortfolioSummaryModel portfolio) {
     final surfaceColor = AppColors.surface(context);
     final borderColor = AppColors.border(context);
     final textPrimary = AppColors.textPrimary(context);
@@ -834,7 +765,721 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     );
   }
 
-  void _showReportSnapshot(BuildContext context, dynamic portfolio, double totalFees, List<TransactionModel> txList) {
+  // 4. Quant Risk & Return KPI Ratios (Sharpe Ratio, Profit Factor, MDD, Fee Drag)
+  Widget _buildRiskRatiosStrip(BuildContext context, PortfolioSummaryModel portfolio, List<TransactionModel> txList, double totalFees) {
+    final surfaceColor = AppColors.surface(context);
+    final borderColor = AppColors.border(context);
+    final textPrimary = AppColors.textPrimary(context);
+
+    // 1. Sharpe Ratio
+    double volatility = 18.0;
+    if (portfolio.holdings.length > 1) {
+      final mean = portfolio.unrealizedPnlPercentage;
+      final sumSq = portfolio.holdings.fold<double>(0.0, (acc, h) => acc + math.pow((h.unrealizedPnlPercentage - mean), 2));
+      final stdDev = math.sqrt(sumSq / portfolio.holdings.length);
+      volatility = stdDev.clamp(10.0, 90.0);
+    }
+    final sharpe = ((portfolio.unrealizedPnlPercentage - 4.5) / volatility);
+
+    // 2. Profit Factor
+    final grossGains = portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl > 0).fold<double>(0.0, (s, h) => s + h.unrealizedPnl) +
+        (portfolio.realizedPnl > 0 ? portfolio.realizedPnl : 0.0);
+    final grossLosses = portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl < 0).fold<double>(0.0, (s, h) => s + h.unrealizedPnl.abs()) +
+        (portfolio.realizedPnl < 0 ? portfolio.realizedPnl.abs() : 0.0);
+    final profitFactor = grossLosses > 0 ? (grossGains / grossLosses) : (grossGains > 0 ? 9.99 : 1.0);
+
+    // 3. Max Drawdown across holdings
+    double maxHoldingDd = 0.0;
+    for (final h in portfolio.holdings) {
+      if (h.unrealizedPnlPercentage < maxHoldingDd) {
+        maxHoldingDd = h.unrealizedPnlPercentage;
+      }
+    }
+
+    // 4. Fee Drag
+    final totalInvested = portfolio.totalInvested;
+    final feeDrag = totalInvested > 0 ? (totalFees / totalInvested) * 100 : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.analytics_outlined, color: AppColors.primary, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Quant Risk & Return Ratios',
+                        style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGlow,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text('QUANT BENCHMARK', style: TextStyle(color: AppColors.primary, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _buildRatioTile(
+                  context,
+                  title: 'Sharpe Ratio',
+                  value: sharpe.toStringAsFixed(2),
+                  badge: sharpe >= 1.5 ? 'Excellent' : (sharpe >= 0.5 ? 'Moderate' : 'High Risk'),
+                  badgeColor: sharpe >= 1.5 ? AppColors.profit : (sharpe >= 0.5 ? AppColors.primary : AppColors.loss),
+                  subtitle: 'Rf 4.5% Risk Adj',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildRatioTile(
+                  context,
+                  title: 'Profit Factor',
+                  value: profitFactor >= 9.9 ? '9.9+' : profitFactor.toStringAsFixed(2),
+                  badge: profitFactor >= 2.0 ? 'Superb' : (profitFactor >= 1.0 ? 'Profitable' : 'Loss Drag'),
+                  badgeColor: profitFactor >= 1.0 ? AppColors.profit : AppColors.loss,
+                  subtitle: 'Gains / Losses',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _buildRatioTile(
+                  context,
+                  title: 'Deepest Dip',
+                  value: Formatters.percentage(maxHoldingDd),
+                  badge: maxHoldingDd >= -10 ? 'Protected' : (maxHoldingDd >= -25 ? 'Normal' : 'High Dip'),
+                  badgeColor: maxHoldingDd >= -15 ? AppColors.profit : (maxHoldingDd >= -30 ? AppColors.gold : AppColors.loss),
+                  subtitle: 'Max Asset DD',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildRatioTile(
+                  context,
+                  title: 'Fee Drag',
+                  value: '${feeDrag.toStringAsFixed(2)}%',
+                  badge: feeDrag < 0.5 ? 'Optimal' : 'High Fees',
+                  badgeColor: feeDrag < 0.5 ? AppColors.profit : AppColors.loss,
+                  subtitle: 'Capital Friction',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRatioTile(
+    BuildContext context, {
+    required String title,
+    required String value,
+    required String badge,
+    required Color badgeColor,
+    required String subtitle,
+  }) {
+    final surfaceLight = AppColors.surfaceLight(context);
+    final borderColor = AppColors.border(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+    final textMuted = AppColors.textMuted(context);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: surfaceLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor.withAlpha(50)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Text(
+                  title,
+                  style: TextStyle(color: textSecondary, fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: badgeColor.withAlpha(25),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  badge,
+                  style: TextStyle(color: badgeColor, fontSize: 9, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: TextStyle(color: textMuted, fontSize: 10),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 5. DCA Execution Quality & Alpha Radar
+  Widget _buildDcaAlphaRadar(BuildContext context, PortfolioSummaryModel portfolio, List<TransactionModel> txList) {
+    final surfaceColor = AppColors.surface(context);
+    final borderColor = AppColors.border(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+    final textMuted = AppColors.textMuted(context);
+    final currency = ref.watch(currencyProvider);
+
+    // DCA Execution Advantage
+    double avgDiscountPct = 0.0;
+    if (portfolio.holdings.isNotEmpty) {
+      double totalDiscount = 0.0;
+      for (final h in portfolio.holdings) {
+        if (h.currentPrice > 0) {
+          totalDiscount += ((h.currentPrice - h.averageBuyPrice) / h.currentPrice) * 100;
+        }
+      }
+      avgDiscountPct = totalDiscount / portfolio.holdings.length;
+    }
+
+    final avgTicket = txList.isNotEmpty ? (portfolio.totalInvested / txList.length) : 0.0;
+    final topAllocPct = portfolio.allocations.isNotEmpty
+        ? portfolio.allocations.map((a) => a.percentage).reduce(math.max)
+        : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.radar_outlined, color: AppColors.primary, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'DCA Execution & Alpha Radar',
+                        style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: avgDiscountPct >= 0 ? AppColors.profitBg : AppColors.lossBg,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  avgDiscountPct >= 0 ? 'ALPHA EDGE' : 'ACCUMULATING',
+                  style: TextStyle(
+                    color: avgDiscountPct >= 0 ? AppColors.profit : AppColors.loss,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceLight(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: borderColor.withAlpha(50)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('DCA Entry Edge', style: TextStyle(color: textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          Formatters.percentage(avgDiscountPct),
+                          style: TextStyle(
+                            color: avgDiscountPct >= 0 ? AppColors.profit : AppColors.loss,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        avgDiscountPct >= 0 ? 'Cost below market spot' : 'Averaging down in dip',
+                        style: TextStyle(color: textMuted, fontSize: 10),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceLight(context),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: borderColor.withAlpha(50)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Avg DCA Ticket', style: TextStyle(color: textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          Formatters.currency(avgTicket, currency),
+                          style: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Per order allocation',
+                        style: TextStyle(color: textMuted, fontSize: 10),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceLight(context),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor.withAlpha(50)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        topAllocPct > 50 ? Icons.warning_amber_rounded : Icons.pie_chart_outline,
+                        color: topAllocPct > 50 ? AppColors.gold : AppColors.primary,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          'Max Position Concentration:',
+                          style: TextStyle(color: textSecondary, fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${topAllocPct.toStringAsFixed(1)}% (${topAllocPct > 50 ? 'High' : 'Balanced'})',
+                  style: TextStyle(
+                    color: topAllocPct > 50 ? AppColors.gold : AppColors.profit,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 6. Capital Milestone Roadmap
+  Widget _buildMilestoneRoadmapCard(BuildContext context, PortfolioSummaryModel portfolio) {
+    final surfaceColor = AppColors.surface(context);
+    final borderColor = AppColors.border(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+    final currency = ref.watch(currencyProvider);
+
+    final double currentVal = portfolio.currentValue;
+    final milestones = <double>[500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0, 50000.0, 100000.0, 250000.0, 500000.0, 1000000.0];
+
+    double target = milestones.firstWhere((double m) => m > currentVal, orElse: () => currentVal * 1.5);
+    int targetIndex = milestones.indexOf(target);
+    double prevMilestone = targetIndex > 0 ? milestones[targetIndex - 1] : 0.0;
+
+    double progress = target > prevMilestone
+        ? ((currentVal - prevMilestone) / (target - prevMilestone)).clamp(0.0, 1.0)
+        : 1.0;
+    double overallPct = target > 0 ? (currentVal / target * 100).clamp(0.0, 100.0) : 100.0;
+    double remaining = (target - currentVal) > 0 ? (target - currentVal) : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.flag_outlined, color: AppColors.primary, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Capital Milestone Roadmap',
+                        style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGlow,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${overallPct.toStringAsFixed(1)}% Goal',
+                  style: const TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Next Goal: ${Formatters.currency(target, currency)}',
+                style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              Text(
+                '${Formatters.currency(remaining, currency)} remaining',
+                style: TextStyle(color: textSecondary, fontSize: 11),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: AppColors.surfaceLight(context),
+              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Base: ${Formatters.currency(prevMilestone, currency)}',
+                style: TextStyle(color: AppColors.textMuted(context), fontSize: 10),
+              ),
+              Text(
+                'Target: ${Formatters.currency(target, currency)}',
+                style: TextStyle(color: AppColors.textMuted(context), fontSize: 10),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 9. Comprehensive Asset-by-Asset Performance Section with Dynamic Filter Chips
+  Widget _buildAssetPerformanceSection(
+    BuildContext context,
+    PortfolioSummaryModel portfolio,
+    Color surfaceColor,
+    Color surfaceLight,
+    Color borderColor,
+    Color textPrimary,
+    Color textSecondary,
+    Color textMuted,
+    dynamic currency,
+  ) {
+    List<HoldingModel> displayedHoldings = portfolio.holdings;
+    if (_assetFilter == 'PROFIT') {
+      displayedHoldings = portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl >= 0).toList();
+    } else if (_assetFilter == 'DRAWDOWN') {
+      displayedHoldings = portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl < 0).toList();
+    } else if (_assetFilter == 'TOP_WEIGHT') {
+      final totalVal = portfolio.currentValue;
+      displayedHoldings = portfolio.holdings.where((HoldingModel h) => totalVal > 0 && (h.currentValue / totalVal) >= 0.10).toList();
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Asset Performance Summary', style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold)),
+              Text('${displayedHoldings.length} of ${portfolio.holdings.length} Assets', style: TextStyle(color: textSecondary, fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Filter chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildAssetFilterChip('ALL', 'All (${portfolio.holdings.length})'),
+                const SizedBox(width: 6),
+                _buildAssetFilterChip('PROFIT', 'Profit (${portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl >= 0).length})'),
+                const SizedBox(width: 6),
+                _buildAssetFilterChip('DRAWDOWN', 'Dip (${portfolio.holdings.where((HoldingModel h) => h.unrealizedPnl < 0).length})'),
+                const SizedBox(width: 6),
+                _buildAssetFilterChip(
+                  'TOP_WEIGHT',
+                  'Weight > 10% (${portfolio.holdings.where((HoldingModel h) => portfolio.currentValue > 0 && (h.currentValue / portfolio.currentValue) >= 0.10).length})',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          if (portfolio.holdings.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text('No active asset positions to analyze', style: TextStyle(color: textMuted)),
+              ),
+            )
+          else if (displayedHoldings.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text('No positions match "$_assetFilter" filter', style: TextStyle(color: textMuted)),
+              ),
+            )
+          else
+            ...displayedHoldings.map((h) {
+              final isProf = h.unrealizedPnl >= 0;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: surfaceLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor.withAlpha(50)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(h.symbol, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 14)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  h.name,
+                                  style: TextStyle(color: textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'DCA Avg: ${Formatters.currency(h.averageBuyPrice, currency)} • Now: ${Formatters.currency(h.currentPrice, currency)}',
+                              style: TextStyle(color: textMuted, fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          Formatters.currency(h.unrealizedPnl, currency),
+                          style: TextStyle(color: isProf ? AppColors.profit : AppColors.loss, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(height: 2),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isProf ? AppColors.profitBg : AppColors.lossBg,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            Formatters.percentage(h.unrealizedPnlPercentage),
+                            style: TextStyle(color: isProf ? AppColors.profit : AppColors.loss, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssetFilterChip(String filterKey, String label) {
+    final isSelected = _assetFilter == filterKey;
+    return GestureDetector(
+      onTap: () => setState(() => _assetFilter = filterKey),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary : AppColors.surfaceLight(context),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.border(context),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : AppColors.textSecondary(context),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            fontSize: 11,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyExecutiveReport(BuildContext context, PortfolioSummaryModel portfolio, double totalFees, List<TransactionModel> txList) async {
+    final currency = ref.read(currencyProvider);
+    final now = DateTime.now();
+    final formattedDate = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    final buffer = StringBuffer();
+    buffer.writeln('====================================================');
+    buffer.writeln('📈 FINANCIAL & ASSET KPI EXECUTIVE REPORT');
+    buffer.writeln('Generated: $formattedDate');
+    buffer.writeln('====================================================');
+    buffer.writeln('Valuation:        ${Formatters.currency(portfolio.currentValue, currency)}');
+    buffer.writeln('Total Invested:   ${Formatters.currency(portfolio.totalInvested, currency)}');
+    buffer.writeln('Unrealized PnL:   ${Formatters.currency(portfolio.unrealizedPnl, currency)} (${Formatters.percentage(portfolio.unrealizedPnlPercentage)})');
+    buffer.writeln('Realized Profit:  ${Formatters.currency(portfolio.realizedPnl, currency)}');
+    buffer.writeln('Trading Fees:     ${Formatters.currency(totalFees, currency)}');
+    buffer.writeln('Active Holdings:  ${portfolio.coinsCount} assets');
+    buffer.writeln('----------------------------------------------------');
+    buffer.writeln('HOLDINGS PERFORMANCE:');
+    for (final h in portfolio.holdings) {
+      buffer.writeln('- ${h.symbol} (${h.name}): ${Formatters.currency(h.currentValue, currency)} | DCA: ${Formatters.currency(h.averageBuyPrice, currency)} | PnL: ${Formatters.percentage(h.unrealizedPnlPercentage)}');
+    }
+    buffer.writeln('====================================================');
+
+    await Clipboard.setData(ClipboardData(text: buffer.toString()));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Executive Markdown statement copied to clipboard!'),
+          backgroundColor: AppColors.profit,
+        ),
+      );
+    }
+  }
+
+  void _showReportSnapshot(BuildContext context, PortfolioSummaryModel portfolio, double totalFees, List<TransactionModel> txList) {
     final surfaceColor = AppColors.surface(context);
     final textPrimary = AppColors.textPrimary(context);
     final textSecondary = AppColors.textSecondary(context);
@@ -874,23 +1519,46 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
             _snapshotRow('Closed Sells Realized Gain', Formatters.currency(portfolio.realizedPnl, currency), AppColors.profit, textSecondary),
             _snapshotRow('Active Asset Positions', '${portfolio.coinsCount} Assets', textPrimary, textSecondary),
             const SizedBox(height: 20),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                minimumSize: const Size.fromHeight(48),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () async {
-                Navigator.pop(ctx);
-                final success = await ExportService.shareCsvStatement(txList, currency);
-                if (context.mounted && success) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Financial CSV statement exported successfully!'), backgroundColor: AppColors.profit),
-                  );
-                }
-              },
-              icon: const Icon(Icons.share, size: 18, color: Colors.white),
-              label: const Text('Export & Share Statement (CSV)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _copyExecutiveReport(context, portfolio, totalFees, txList);
+                    },
+                    icon: const Icon(Icons.copy_outlined, size: 16),
+                    label: const Text('Copy Audit', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      final success = await ExportService.shareCsvStatement(txList, currency);
+                      if (context.mounted && success) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Financial CSV statement exported successfully!'), backgroundColor: AppColors.profit),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.share, size: 16, color: Colors.white),
+                    label: const Text('Share CSV', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

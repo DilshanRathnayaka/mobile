@@ -9,6 +9,7 @@ import '../providers/currency_provider.dart';
 import '../providers/portfolio_provider.dart';
 import 'add_transaction_screen.dart';
 import 'position_detail_screen.dart';
+import '../widgets/skeleton_loading.dart';
 
 class TransactionsHistoryScreen extends ConsumerStatefulWidget {
   final String? initialCoinFilter; // e.g. 'BTC'
@@ -65,7 +66,7 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
         ],
       ),
       body: txAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        loading: () => const TransactionsSkeleton(),
         error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: AppColors.loss))),
         data: (allTransactions) {
           if (allTransactions.isEmpty) {
@@ -105,7 +106,22 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
 
           // Apply filters
           final filteredTransactions = allTransactions.where((tx) {
-            final matchesType = _selectedTypeFilter == 'ALL' || tx.type == _selectedTypeFilter;
+            bool matchesType = false;
+            if (_selectedTypeFilter == 'ALL') {
+              matchesType = true;
+            } else if (_selectedTypeFilter == 'BUY') {
+              matchesType = tx.type == 'BUY' && !tx.isFutures;
+            } else if (_selectedTypeFilter == 'SELL') {
+              matchesType = tx.type == 'SELL' && !tx.isFutures;
+            } else if (_selectedTypeFilter == 'LONG') {
+              matchesType = tx.type == 'LONG' || (tx.type == 'BUY' && tx.isFutures);
+            } else if (_selectedTypeFilter == 'SHORT') {
+              matchesType = tx.type == 'SHORT' || (tx.type == 'SELL' && tx.isFutures);
+            } else if (_selectedTypeFilter == 'DEPOSIT') {
+              matchesType = tx.type == 'DEPOSIT' || tx.type == 'SALARY_DEPOSIT';
+            } else {
+              matchesType = tx.type == _selectedTypeFilter;
+            }
             final matchesCoin = _selectedCoinFilter == null || (tx.symbol != null && tx.symbol!.toUpperCase() == _selectedCoinFilter);
             return matchesType && matchesCoin;
           }).toList();
@@ -125,11 +141,15 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                     children: [
                       _typeFilterChip('All Activity', 'ALL'),
                       const SizedBox(width: 8),
-                      _typeFilterChip('DCA Buys', 'BUY', color: AppColors.profit),
+                      _typeFilterChip('Spot Buys', 'BUY', color: AppColors.profit),
                       const SizedBox(width: 8),
-                      _typeFilterChip('Sells & Realized', 'SELL', color: AppColors.loss),
+                      _typeFilterChip('Spot Sells', 'SELL', color: AppColors.loss),
                       const SizedBox(width: 8),
-                      _typeFilterChip('Salary Inflows', 'SALARY_DEPOSIT', color: AppColors.gold),
+                      _typeFilterChip('Futures Long', 'LONG', color: const Color(0xFF00C087)),
+                      const SizedBox(width: 8),
+                      _typeFilterChip('Futures Short', 'SHORT', color: const Color(0xFFFF4D4F)),
+                      const SizedBox(width: 8),
+                      _typeFilterChip('Deposits', 'DEPOSIT', color: AppColors.gold),
                     ],
                   ),
                 ),
@@ -164,19 +184,36 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '${filteredTransactions.length} records found',
-                      style: TextStyle(color: textSecondary, fontSize: 12, fontWeight: FontWeight.w600),
+                    Flexible(
+                      child: Text(
+                        '${filteredTransactions.length} records found',
+                        style: TextStyle(color: textSecondary, fontSize: 12, fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     if (_selectedTypeFilter == 'SELL')
-                      Text(
-                        'Total Sold: ${Formatters.currency(totalSellsVolume, currency)}',
-                        style: const TextStyle(color: AppColors.loss, fontSize: 12, fontWeight: FontWeight.bold),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            'Total Sold: ${Formatters.currency(totalSellsVolume, currency)}',
+                            style: const TextStyle(color: AppColors.loss, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
                       )
                     else if (_selectedTypeFilter == 'BUY')
-                      Text(
-                        'Total DCA Capital: ${Formatters.currency(totalBuysVolume, currency)}',
-                        style: const TextStyle(color: AppColors.profit, fontSize: 12, fontWeight: FontWeight.bold),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            'Total DCA Capital: ${Formatters.currency(totalBuysVolume, currency)}',
+                            style: const TextStyle(color: AppColors.profit, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -197,11 +234,15 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                         itemCount: filteredTransactions.length,
                         itemBuilder: (context, index) {
                           final tx = filteredTransactions[index];
-                          final isBuy = tx.type == 'BUY';
-                          final isSell = tx.type == 'SELL';
-                          final isSalary = tx.type == 'SALARY_DEPOSIT';
+                          final isLong = tx.type == 'LONG' || (tx.type == 'BUY' && tx.isFutures);
+                          final isShort = tx.type == 'SHORT' || (tx.type == 'SELL' && tx.isFutures);
+                          final isBuy = tx.type == 'BUY' && !tx.isFutures;
+                          final isSell = tx.type == 'SELL' && !tx.isFutures;
+                          final isSalary = tx.type == 'SALARY_DEPOSIT' || tx.type == 'DEPOSIT';
 
-                          final color = isBuy ? AppColors.profit : (isSalary ? AppColors.gold : AppColors.loss);
+                          final color = (isBuy || isLong)
+                              ? AppColors.profit
+                              : (isSalary ? AppColors.gold : AppColors.loss);
 
                           return InkWell(
                             onTap: () => _showTransactionDetailSheet(context, tx, portfolioAsync, currency),
@@ -224,7 +265,7 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Icon(
-                                      isBuy
+                                      (isBuy || isLong)
                                           ? Icons.arrow_downward_rounded
                                           : (isSalary ? Icons.payments_rounded : Icons.arrow_upward_rounded),
                                       color: color,
@@ -240,19 +281,37 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                       children: [
                                         Row(
                                           children: [
-                                            Text(
-                                              isSalary ? 'Salary Inflow' : '${tx.type} ${tx.symbol ?? ""}',
-                                              style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
+                                            Flexible(
+                                              child: Text(
+                                                isSalary ? 'Cashflow Deposit' : '${tx.type} ${tx.symbol ?? ""}',
+                                                style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
                                             ),
-                                            if (isSell) ...[
-                                              const SizedBox(width: 6),
+                                            if (tx.isFutures) ...[
+                                              const SizedBox(width: 5),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFFF0B90B).withAlpha(35),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                  border: Border.all(color: const Color(0xFFF0B90B).withAlpha(120), width: 0.8),
+                                                ),
+                                                child: Text(
+                                                  '${tx.leverage.toInt()}x ${isLong ? "LONG" : (isShort ? "SHORT" : "PERP")}',
+                                                  style: const TextStyle(color: Color(0xFFF0B90B), fontSize: 9, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                            ] else if (isSell) ...[
+                                              const SizedBox(width: 5),
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                                 decoration: BoxDecoration(
                                                   color: AppColors.lossBg,
                                                   borderRadius: BorderRadius.circular(4),
                                                 ),
-                                                child: const Text('CLOSED/SOLD', style: TextStyle(color: AppColors.loss, fontSize: 9, fontWeight: FontWeight.bold)),
+                                                child: const Text('SOLD', style: TextStyle(color: AppColors.loss, fontSize: 9, fontWeight: FontWeight.bold)),
                                               ),
                                             ],
                                           ],
@@ -261,6 +320,8 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                         Text(
                                           DateFormat('dd MMM yyyy, hh:mm a').format(tx.transactionDate),
                                           style: TextStyle(color: textMuted, fontSize: 11),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                         if (tx.notes.isNotEmpty)
                                           Padding(
@@ -275,23 +336,35 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                       ],
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
 
                                   // Right Amount
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        Formatters.currency(tx.totalAmount, currency),
-                                        style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
-                                      ),
-                                      if (!isSalary)
-                                        Text(
-                                          '${Formatters.cryptoAmount(tx.amount)} @ ${Formatters.currency(tx.pricePerUnit, currency)}',
-                                          style: TextStyle(color: textSecondary, fontSize: 11),
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 135),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          alignment: Alignment.centerRight,
+                                          child: Text(
+                                            Formatters.currency(tx.totalAmount, currency),
+                                            style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                                          ),
                                         ),
-                                    ],
+                                        if (!isSalary)
+                                          FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            alignment: Alignment.centerRight,
+                                            child: Text(
+                                              '${Formatters.cryptoAmount(tx.amount)} @ ${Formatters.currency(tx.pricePerUnit, currency)}',
+                                              style: TextStyle(color: textSecondary, fontSize: 11),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(width: 6),
+                                  const SizedBox(width: 4),
                                   Icon(Icons.chevron_right, color: textMuted, size: 18),
                                 ],
                               ),
@@ -392,52 +465,95 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return SafeArea(
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.88,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Header
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: color.withAlpha(25), shape: BoxShape.circle),
-                        child: Icon(isBuy ? Icons.arrow_downward : (isSalary ? Icons.payments : Icons.arrow_upward), color: color, size: 20),
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(color: color.withAlpha(25), shape: BoxShape.circle),
+                              child: Icon(isBuy ? Icons.arrow_downward : (isSalary ? Icons.payments : Icons.arrow_upward), color: color, size: 20),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    isSalary ? 'Salary Inflow Record' : '${tx.type} Order Details',
+                                    style: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    DateFormat('dd MMMM yyyy, hh:mm a').format(tx.transactionDate),
+                                    style: TextStyle(color: textMuted, fontSize: 11),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isSalary ? 'Salary Inflow Record' : '${tx.type} Order Details',
-                            style: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            DateFormat('dd MMMM yyyy, hh:mm a').format(tx.transactionDate),
-                            style: TextStyle(color: textMuted, fontSize: 11),
-                          ),
-                        ],
-                      ),
+                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
                     ],
                   ),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Divider(color: borderColor),
-              const SizedBox(height: 12),
+                  const SizedBox(height: 16),
+                  Divider(color: borderColor),
+                  const SizedBox(height: 12),
 
               // Breakdown rows
               if (!isSalary) ...[
                 _detailRow('Asset / Crypto', '${tx.name ?? tx.symbol} (${tx.symbol})', textPrimary, textMuted),
+                if (tx.isFutures) ...[
+                  const SizedBox(height: 10),
+                  _detailRow(
+                    'Market & Leverage',
+                    '${tx.leverage.toInt()}x Isolated Futures (${tx.isLong ? "LONG" : "SHORT"})',
+                    const Color(0xFFF0B90B),
+                    textMuted,
+                    isBold: true,
+                  ),
+                  if (tx.margin != null && tx.margin! > 0) ...[
+                    const SizedBox(height: 10),
+                    _detailRow(
+                      'Initial Margin / Collateral',
+                      Formatters.currency(tx.margin!, currency),
+                      const Color(0xFFF0B90B),
+                      textMuted,
+                      isBold: true,
+                    ),
+                  ],
+                  if (tx.liquidationPrice != null && tx.liquidationPrice! > 0) ...[
+                    const SizedBox(height: 10),
+                    _detailRow(
+                      'Estimated Liquidation Price',
+                      Formatters.currency(tx.liquidationPrice!, currency),
+                      AppColors.loss,
+                      textMuted,
+                      isBold: true,
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 10),
                 _detailRow(
-                  isBuy ? 'DCA Buy Price per Unit' : 'Execution Sell Price per Unit',
+                  (isBuy || tx.isLong) ? 'Entry Price per Unit' : 'Execution Sell Price per Unit',
                   Formatters.currency(tx.pricePerUnit, currency),
                   textPrimary,
                   textMuted,
@@ -509,7 +625,10 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                       );
                     },
                     icon: const Icon(Icons.show_chart_rounded, size: 18),
-                    label: Text('View Full ${tx.symbol} DCA & Position History', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('View Full ${tx.symbol} DCA & Position History', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -577,17 +696,29 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
               const SizedBox(height: 10),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
-  }
+  },
+);
+}
 
   Widget _detailRow(String label, String value, Color textColor, Color labelColor, {bool isBold = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(color: labelColor, fontSize: 13)),
         Flexible(
+          flex: 2,
+          child: Text(
+            label,
+            style: TextStyle(color: labelColor, fontSize: 13),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          flex: 3,
           child: Text(
             value,
             style: TextStyle(color: textColor, fontSize: 13.5, fontWeight: isBold ? FontWeight.bold : FontWeight.w500),

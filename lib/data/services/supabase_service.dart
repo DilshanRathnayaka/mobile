@@ -13,12 +13,19 @@ import '../models/portfolio_summary_model.dart';
 import '../models/salary_report_model.dart';
 import '../models/transaction_model.dart';
 import 'binance_service.dart';
+import 'spring_boot_service.dart';
+import '../../core/constants/app_backend_config.dart';
 
 class SupabaseService {
   final BinanceService _binanceService = BinanceService();
+  final SpringBootService _springBootService = SpringBootService();
+  SpringBootService get springBootService => _springBootService;
   final _uuid = const Uuid();
 
   SupabaseClient? get _client {
+    // When Spring Boot backend is active, NEVER touch Supabase!
+    if (AppBackendConfig.isSpringBoot) return null;
+
     try {
       if (Supabase.instance.client.auth.currentSession != null ||
           Supabase.instance.client.auth.currentUser != null) {
@@ -31,29 +38,121 @@ class SupabaseService {
     return null;
   }
 
-  User? get currentUser => _client?.auth.currentUser;
-  bool get isAuthenticated => currentUser != null;
+  User? get currentUser {
+    if (AppBackendConfig.isSpringBoot) {
+      final sbUser = _springBootService.currentUser;
+      if (sbUser == null) return null;
+      return User(
+        id: sbUser.id,
+        appMetadata: {},
+        userMetadata: {'display_name': sbUser.displayName},
+        aud: 'authenticated',
+        createdAt: DateTime.now().toIso8601String(),
+        email: sbUser.email,
+      );
+    }
+    return _client?.auth.currentUser;
+  }
+
+  bool get isAuthenticated {
+    if (AppBackendConfig.isSpringBoot) {
+      return _springBootService.isAuthenticated;
+    }
+    return currentUser != null;
+  }
+
+  /// Subscribes to Supabase Realtime changes on holdings and transactions tables.
+  RealtimeChannel? subscribeToPortfolioChanges({required void Function() onChange}) {
+    if (AppBackendConfig.isSpringBoot) return null;
+    if (_client == null || !isAuthenticated) return null;
+    final userId = currentUser!.id;
+    try {
+      final channel = _client!.channel('public_portfolio_$userId');
+      channel
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'holdings',
+            callback: (payload) {
+              debugPrint('[Supabase Realtime] holdings changed: ${payload.eventType}');
+              onChange();
+            },
+          )
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'transactions',
+            callback: (payload) {
+              debugPrint('[Supabase Realtime] transactions changed: ${payload.eventType}');
+              onChange();
+            },
+          )
+          .subscribe();
+      return channel;
+    } catch (e) {
+      debugPrint('[Supabase Realtime] Subscribe error: $e');
+      return null;
+    }
+  }
 
   // ==========================================
   // 🔐 AUTHENTICATION & PASSWORD RECOVERY
   // ==========================================
   Future<AuthResponse?> signUp(String email, String password) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final sbUser = await _springBootService.signUp(email, password);
+      final user = User(
+        id: sbUser.id,
+        appMetadata: {},
+        userMetadata: {'display_name': sbUser.displayName},
+        aud: 'authenticated',
+        createdAt: DateTime.now().toIso8601String(),
+        email: sbUser.email,
+      );
+      return AuthResponse(
+        session: Session(accessToken: 'sb_jwt', tokenType: 'bearer', user: user),
+        user: user,
+      );
+    }
     if (_client == null) throw Exception('Supabase is not initialized');
     return await _client!.auth.signUp(email: email, password: password);
   }
 
   Future<AuthResponse?> signIn(String email, String password) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final sbUser = await _springBootService.signIn(email, password);
+      final user = User(
+        id: sbUser.id,
+        appMetadata: {},
+        userMetadata: {'display_name': sbUser.displayName},
+        aud: 'authenticated',
+        createdAt: DateTime.now().toIso8601String(),
+        email: sbUser.email,
+      );
+      return AuthResponse(
+        session: Session(accessToken: 'sb_jwt', tokenType: 'bearer', user: user),
+        user: user,
+      );
+    }
     if (_client == null) throw Exception('Supabase is not initialized');
     return await _client!.auth.signInWithPassword(email: email, password: password);
   }
 
   Future<void> signOut() async {
+    if (AppBackendConfig.isSpringBoot) {
+      await _springBootService.signOut();
+      return;
+    }
     if (_client != null) {
       await _client!.auth.signOut();
     }
   }
 
   Future<void> resetPasswordForEmail(String email) async {
+    if (AppBackendConfig.isSpringBoot) {
+      // In Spring Boot, reset password can trigger backend email or prompt
+      return;
+    }
     if (_client == null) throw Exception('Supabase is not initialized');
     await _client!.auth.resetPasswordForEmail(email);
   }
@@ -106,10 +205,10 @@ class SupabaseService {
     }
   }
 
-  // ==========================================
-  // 📊 PORTFOLIO & HOLDINGS
-  // ==========================================
   Future<PortfolioSummaryModel> getPortfolioSummary() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getPortfolioSummary();
+    }
     if (_client == null || !isAuthenticated) {
       return PortfolioSummaryModel.empty();
     }
@@ -278,6 +377,9 @@ class SupabaseService {
   // 📝 TRANSACTIONS (CRUD WITH ATOMIC RPCS)
   // ==========================================
   Future<List<TransactionModel>> getTransactions({int limit = 100, int offset = 0}) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getTransactions();
+    }
     if (_client == null || !isAuthenticated) {
       return [];
     }
@@ -313,6 +415,9 @@ class SupabaseService {
   }
 
   Future<List<TransactionModel>> getAllTransactionsForExport() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getTransactions();
+    }
     if (_client == null || !isAuthenticated) return [];
 
     final allList = <TransactionModel>[];
@@ -331,6 +436,32 @@ class SupabaseService {
   }
 
   Future<bool> createTransaction(Map<String, dynamic> data) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final amount = (data['amount'] as num).toDouble();
+      final price = (data['pricePerUnit'] as num).toDouble();
+      final rawSymbol = data['symbol']?.toString() ?? 'BTC';
+      final coinId = AssetMapper.getCanonicalCoinId(data['coinId'] ?? rawSymbol);
+      final tx = TransactionModel(
+        id: _uuid.v4(),
+        type: data['type'] ?? 'BUY',
+        coinId: coinId,
+        symbol: rawSymbol.toUpperCase(),
+        name: data['name'] ?? rawSymbol,
+        amount: amount,
+        pricePerUnit: price,
+        totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? (amount * price),
+        fee: (data['fee'] as num?)?.toDouble() ?? 0.0,
+        originalCurrency: data['originalCurrency']?.toString() ?? 'USD',
+        originalAmount: (data['originalAmount'] as num?)?.toDouble(),
+        fxToBase: (data['fxToBase'] as num?)?.toDouble() ?? 1.0,
+        transactionDate: data['transactionDate'] != null ? DateTime.parse(data['transactionDate'].toString()) : DateTime.now(),
+        notes: data['notes']?.toString() ?? '',
+        leverage: (data['leverage'] as num?)?.toDouble() ?? 1.0,
+        margin: (data['margin'] as num?)?.toDouble(),
+        liquidationPrice: (data['liquidationPrice'] as num?)?.toDouble(),
+      );
+      return await _springBootService.addTransaction(tx);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final opId = _uuid.v4();
@@ -391,6 +522,10 @@ class SupabaseService {
   }
 
   Future<bool> updateTransaction(String id, Map<String, dynamic> data) async {
+    if (AppBackendConfig.isSpringBoot) {
+      await _springBootService.deleteTransaction(id);
+      return await createTransaction(data);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final opId = _uuid.v4();
@@ -450,6 +585,9 @@ class SupabaseService {
   }
 
   Future<bool> deleteTransaction(String id) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.deleteTransaction(id);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final opId = _uuid.v4();
@@ -482,6 +620,9 @@ class SupabaseService {
   // 💰 SALARY DCA TRACKING (ATOMIC)
   // ==========================================
   Future<SalaryReportModel> getSalaryReport() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getSalaryReport();
+    }
     if (_client == null || !isAuthenticated) {
       return SalaryReportModel.empty();
     }
@@ -530,6 +671,9 @@ class SupabaseService {
   }
 
   Future<bool> saveSalaryAllocation(Map<String, dynamic> data) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.saveSalaryAllocation(data);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final opId = _uuid.v4();
@@ -614,6 +758,9 @@ class SupabaseService {
   }
 
   Future<bool> deleteSalaryAllocation(String yearMonth) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.deleteSalaryAllocation(yearMonth);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final opId = _uuid.v4();
@@ -660,6 +807,9 @@ class SupabaseService {
   // 💵 CASHFLOW DEPOSITS & WITHDRAWALS (CLOUD SYNCED)
   // ==========================================
   Future<List<CashflowItem>> getCashflowRecords() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getCashflowRecords();
+    }
     if (_client == null || !isAuthenticated) return [];
 
     try {
@@ -685,6 +835,14 @@ class SupabaseService {
               .replaceAll('[WITHDRAWAL] ', '')
               .replaceAll('[WITHDRAWAL]', '')
               .trim();
+          final origAmt = (row['original_amount'] as num?)?.toDouble();
+          final origCurr = row['original_currency']?.toString();
+          final rate = (row['fx_to_base'] as num?)?.toDouble() ??
+              (row['price_per_unit'] as num?)?.toDouble();
+          final isP2P = notes.toUpperCase().contains('[P2P]') ||
+              (row['name']?.toString().toUpperCase().contains('P2P') ?? false) ||
+              (rate != null && rate > 1.0) ||
+              (origAmt != null && origAmt > 0);
 
           list.add(CashflowItem(
             id: row['id'].toString(),
@@ -693,6 +851,10 @@ class SupabaseService {
             category: row['name']?.toString() ?? (isDep ? 'Deposit' : 'Withdrawal'),
             date: DateTime.tryParse(row['transaction_date']?.toString() ?? '') ?? DateTime.now(),
             notes: cleanNotes,
+            isP2P: isP2P,
+            p2pRate: rate != null && rate > 1.0 ? rate : null,
+            localCurrency: origCurr,
+            localAmount: origAmt,
           ));
         }
       }
@@ -738,11 +900,35 @@ class SupabaseService {
     required String category,
     required DateTime date,
     String notes = '',
+    bool isP2P = false,
+    double? p2pRate,
+    String? localCurrency,
+    double? localAmount,
   }) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.addCashflowRecord(
+        type: type,
+        amount: amount,
+        category: category,
+        date: date,
+        notes: notes,
+        isP2P: isP2P,
+        p2pRate: p2pRate,
+        localCurrency: localCurrency,
+        localAmount: localAmount,
+      );
+    }
     if (_client == null || !isAuthenticated) return null;
 
     final id = _uuid.v4();
     final isWithdrawal = type.toUpperCase() == 'WITHDRAWAL';
+    final rate = p2pRate ?? 1.0;
+    final curr = (localCurrency != null && localCurrency.isNotEmpty) ? localCurrency : 'LKR';
+    final calcLocal = localAmount ?? (amount * rate);
+    final prefix = isP2P ? '[P2P] ' : '';
+    final finalNotes = (isP2P && !notes.toUpperCase().contains('[P2P]'))
+        ? '$prefix$notes'.trim()
+        : notes;
 
     try {
       if (isWithdrawal) {
@@ -756,14 +942,16 @@ class SupabaseService {
             'coin_id': null,
             'name': category,
             'amount': amount,
-            'price_per_unit': 1.0,
+            'pricePerUnit': rate,
+            'price_per_unit': rate,
+            'totalAmount': amount,
             'total_amount': amount,
             'fee': 0.0,
             'transaction_date': date.toIso8601String(),
-            'notes': notes,
-            'original_currency': 'USD',
-            'original_amount': amount,
-            'fx_to_base': 1.0,
+            'notes': finalNotes,
+            'original_currency': curr,
+            'original_amount': calcLocal,
+            'fx_to_base': rate,
           });
           inserted = true;
         } catch (wdErr) {
@@ -779,14 +967,14 @@ class SupabaseService {
             'coin_id': null,
             'name': category,
             'amount': amount,
-            'price_per_unit': 1.0,
+            'price_per_unit': rate,
             'total_amount': amount,
             'fee': 0.0,
             'transaction_date': date.toIso8601String(),
-            'notes': '[WITHDRAWAL] $notes'.trim(),
-            'original_currency': 'USD',
-            'original_amount': amount,
-            'fx_to_base': 1.0,
+            'notes': '[WITHDRAWAL] $finalNotes'.trim(),
+            'original_currency': curr,
+            'original_amount': calcLocal,
+            'fx_to_base': rate,
           });
         }
       } else {
@@ -799,15 +987,15 @@ class SupabaseService {
             'symbol': 'USDT',
             'coin_id': null,
             'name': category,
-            'amount': 1.0,
-            'price_per_unit': amount,
+            'amount': amount,
+            'price_per_unit': rate,
             'total_amount': amount,
             'fee': 0.0,
             'transaction_date': date.toIso8601String(),
-            'notes': notes,
-            'original_currency': 'USD',
-            'original_amount': amount,
-            'fx_to_base': 1.0,
+            'notes': finalNotes,
+            'original_currency': curr,
+            'original_amount': calcLocal,
+            'fx_to_base': rate,
           });
           inserted = true;
         } catch (depErr) {
@@ -822,15 +1010,15 @@ class SupabaseService {
             'symbol': 'USDT',
             'coin_id': null,
             'name': category,
-            'amount': 1.0,
-            'price_per_unit': amount,
+            'amount': amount,
+            'price_per_unit': rate,
             'total_amount': amount,
             'fee': 0.0,
             'transaction_date': date.toIso8601String(),
-            'notes': notes,
-            'original_currency': 'USD',
-            'original_amount': amount,
-            'fx_to_base': 1.0,
+            'notes': finalNotes,
+            'original_currency': curr,
+            'original_amount': calcLocal,
+            'fx_to_base': rate,
           });
         }
       }
@@ -841,7 +1029,11 @@ class SupabaseService {
         amount: amount,
         category: category,
         date: date,
-        notes: notes,
+        notes: finalNotes,
+        isP2P: isP2P,
+        p2pRate: rate > 1.0 ? rate : null,
+        localCurrency: curr,
+        localAmount: calcLocal,
       );
     } catch (e) {
       debugPrint('[Supabase] addCashflowRecord error: $e');
@@ -856,19 +1048,47 @@ class SupabaseService {
     required String category,
     required DateTime date,
     String notes = '',
+    bool isP2P = false,
+    double? p2pRate,
+    String? localCurrency,
+    double? localAmount,
   }) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.updateCashflowRecord(
+        id: id,
+        type: type,
+        amount: amount,
+        category: category,
+        date: date,
+        notes: notes,
+        isP2P: isP2P,
+        p2pRate: p2pRate,
+        localCurrency: localCurrency,
+        localAmount: localAmount,
+      );
+    }
     if (_client == null || !isAuthenticated) return false;
 
     final isWithdrawal = type.toUpperCase() == 'WITHDRAWAL';
+    final rate = p2pRate ?? 1.0;
+    final curr = (localCurrency != null && localCurrency.isNotEmpty) ? localCurrency : 'LKR';
+    final calcLocal = localAmount ?? (amount * rate);
+    final prefix = isP2P ? '[P2P] ' : '';
+    final finalNotes = (isP2P && !notes.toUpperCase().contains('[P2P]'))
+        ? '$prefix$notes'.trim()
+        : notes;
+
     try {
       await _client!.from('transactions').update({
         'name': category,
-        'amount': isWithdrawal ? amount : 1.0,
-        'price_per_unit': isWithdrawal ? 1.0 : amount,
+        'amount': amount,
+        'price_per_unit': rate,
         'total_amount': amount,
         'transaction_date': date.toIso8601String(),
-        'notes': isWithdrawal ? '[WITHDRAWAL] $notes'.trim() : notes,
-        'original_amount': amount,
+        'notes': isWithdrawal ? '[WITHDRAWAL] $finalNotes'.trim() : finalNotes,
+        'original_currency': curr,
+        'original_amount': calcLocal,
+        'fx_to_base': rate,
       }).eq('id', id).eq('user_id', currentUser!.id);
 
       return true;
@@ -879,6 +1099,9 @@ class SupabaseService {
   }
 
   Future<bool> deleteCashflowRecord(String id) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.deleteCashflowRecord(id);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     try {
@@ -898,6 +1121,9 @@ class SupabaseService {
   // 💼 EMPLOYMENT, SALARY, EPF & ETF CAREER ENGINE
   // ==========================================
   Future<List<EmploymentModel>> getEmployments() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getEmployments();
+    }
     if (_client == null || !isAuthenticated) return [];
 
     try {
@@ -926,7 +1152,39 @@ class SupabaseService {
     bool isCurrent = true,
     String notes = '',
     String currency = 'LKR',
+    bool isProbation = false,
+    int probationMonths = 3,
+    DateTime? probationEndDate,
+    bool hasEpfEtfDuringProbation = true,
   }) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final bSalary = basicSalary > 0 ? basicSalary : (monthlySalary ?? 0.0);
+      final fAllowance = fixedAllowance;
+      final mSalary = (basicSalary > 0 || fixedAllowance > 0)
+          ? (bSalary + fAllowance)
+          : (monthlySalary ?? bSalary);
+      final model = EmploymentModel(
+        id: _uuid.v4(),
+        userId: _springBootService.currentUserId ?? '',
+        companyName: companyName,
+        designation: designation,
+        basicSalary: bSalary,
+        fixedAllowance: fAllowance,
+        monthlySalary: mSalary,
+        salaryDay: salaryDay,
+        startDate: startDate,
+        endDate: endDate,
+        isCurrent: isCurrent,
+        notes: notes,
+        currency: currency,
+        isProbation: isProbation,
+        probationMonths: probationMonths,
+        probationEndDate: probationEndDate,
+        hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+      );
+      final ok = await _springBootService.createEmployment(model);
+      return ok ? model : null;
+    }
     if (_client == null || !isAuthenticated) return null;
 
     final id = _uuid.v4();
@@ -961,6 +1219,10 @@ class SupabaseService {
         'is_current': isCurrent,
         'notes': notes.trim(),
         'currency': currency,
+        'is_probation': isProbation,
+        'probation_months': probationMonths,
+        'probation_end_date': probationEndDate?.toIso8601String().split('T').first,
+        'has_epf_etf_during_probation': hasEpfEtfDuringProbation,
       };
 
       await _client!.from('employments').insert(data);
@@ -979,6 +1241,10 @@ class SupabaseService {
         isCurrent: isCurrent,
         notes: notes,
         currency: currency,
+        isProbation: isProbation,
+        probationMonths: probationMonths,
+        probationEndDate: probationEndDate,
+        hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
       );
     } catch (e) {
       debugPrint('[Supabase] addEmployment error: $e');
@@ -999,7 +1265,38 @@ class SupabaseService {
     required bool isCurrent,
     String notes = '',
     String currency = 'LKR',
+    bool isProbation = false,
+    int probationMonths = 3,
+    DateTime? probationEndDate,
+    bool hasEpfEtfDuringProbation = true,
   }) async {
+    if (AppBackendConfig.isSpringBoot) {
+      final bSalary = basicSalary > 0 ? basicSalary : (monthlySalary ?? 0.0);
+      final fAllowance = fixedAllowance;
+      final mSalary = (basicSalary > 0 || fixedAllowance > 0)
+          ? (bSalary + fAllowance)
+          : (monthlySalary ?? bSalary);
+      final model = EmploymentModel(
+        id: id,
+        userId: _springBootService.currentUserId ?? '',
+        companyName: companyName,
+        designation: designation,
+        basicSalary: bSalary,
+        fixedAllowance: fAllowance,
+        monthlySalary: mSalary,
+        salaryDay: salaryDay,
+        startDate: startDate,
+        endDate: endDate,
+        isCurrent: isCurrent,
+        notes: notes,
+        currency: currency,
+        isProbation: isProbation,
+        probationMonths: probationMonths,
+        probationEndDate: probationEndDate,
+        hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+      );
+      return await _springBootService.createEmployment(model);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     try {
@@ -1021,6 +1318,10 @@ class SupabaseService {
         'is_current': isCurrent,
         'notes': notes.trim(),
         'currency': currency,
+        'is_probation': isProbation,
+        'probation_months': probationMonths,
+        'probation_end_date': probationEndDate?.toIso8601String().split('T').first,
+        'has_epf_etf_during_probation': hasEpfEtfDuringProbation,
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', id).eq('user_id', currentUser!.id);
 
@@ -1052,6 +1353,9 @@ class SupabaseService {
   }
 
   Future<bool> deleteEmployment(String id) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.deleteEmployment(id);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     try {
@@ -1072,6 +1376,9 @@ class SupabaseService {
   // 🏦 BANK ACCOUNT & INITIAL BALANCE
   // ==========================================
   Future<BankAccountModel?> getBankAccount() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getBankAccount();
+    }
     if (_client == null || !isAuthenticated) return null;
 
     try {
@@ -1091,6 +1398,9 @@ class SupabaseService {
   }
 
   Future<BankAccountModel?> upsertBankAccount(BankAccountModel account) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.upsertBankAccount(account);
+    }
     if (_client == null || !isAuthenticated) return null;
 
     try {
@@ -1124,6 +1434,9 @@ class SupabaseService {
   // 💸 CASH RECORDS (INCOME, EXPENSE, INVEST)
   // ==========================================
   Future<List<CashRecordModel>> getCashRecords({String? yearMonth}) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getCashRecords(yearMonth: yearMonth);
+    }
     if (_client == null || !isAuthenticated) return [];
 
     try {
@@ -1145,6 +1458,9 @@ class SupabaseService {
   }
 
   Future<CashRecordModel?> addCashRecord(CashRecordModel record) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.addCashRecord(record);
+    }
     if (_client == null || !isAuthenticated) return null;
 
     try {
@@ -1174,6 +1490,9 @@ class SupabaseService {
   }
 
   Future<bool> deleteCashRecord(String recordId) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.deleteCashRecord(recordId);
+    }
     if (_client == null || !isAuthenticated) return false;
 
     try {
@@ -1193,6 +1512,9 @@ class SupabaseService {
   // 📊 BUDGET & INVESTMENT ALLOCATION PLANS
   // ==========================================
   Future<MonthlyBudgetPlanModel?> getBudgetPlan() async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.getBudgetPlan();
+    }
     if (_client == null || !isAuthenticated) return null;
 
     try {
@@ -1212,6 +1534,9 @@ class SupabaseService {
   }
 
   Future<MonthlyBudgetPlanModel?> upsertBudgetPlan(MonthlyBudgetPlanModel plan) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.upsertBudgetPlan(plan);
+    }
     if (_client == null || !isAuthenticated) return null;
 
     try {

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -15,9 +14,6 @@ final bankBudgetProvider =
 });
 
 class BankBudgetNotifier extends StateNotifier<AsyncValue<BankBudgetSummary>> {
-  static const _prefAccountKey = 'local_bank_account_data';
-  static const _prefRecordsKey = 'local_cash_records_data';
-  static const _prefPlanKey = 'local_budget_plan_data';
   static const _prefDismissedSalaryKey = 'dismissed_auto_salary_months';
 
   final SupabaseService _supabase;
@@ -52,7 +48,7 @@ class BankBudgetNotifier extends StateNotifier<AsyncValue<BankBudgetSummary>> {
       List<CashRecordModel> records = [];
       MonthlyBudgetPlanModel plan = MonthlyBudgetPlanModel.defaults();
 
-      // 1. Try Supabase cloud first
+      // Cloud database is the sole authoritative source of truth (zero local leaks)
       if (_supabase.isAuthenticated) {
         final cloudAccount = await _supabase.getBankAccount();
         if (cloudAccount != null) account = cloudAccount;
@@ -62,35 +58,6 @@ class BankBudgetNotifier extends StateNotifier<AsyncValue<BankBudgetSummary>> {
 
         final cloudPlan = await _supabase.getBudgetPlan();
         if (cloudPlan != null) plan = cloudPlan;
-      }
-
-      // 2. Fallback to local storage if empty
-      final prefs = await SharedPreferences.getInstance();
-      if (account.id.isEmpty) {
-        final rawAcc = prefs.getString(_prefAccountKey);
-        if (rawAcc != null) {
-          try {
-            account = BankAccountModel.fromJson(jsonDecode(rawAcc));
-          } catch (_) {}
-        }
-      }
-
-      if (records.isEmpty) {
-        final rawRecs = prefs.getStringList(_prefRecordsKey);
-        if (rawRecs != null && rawRecs.isNotEmpty) {
-          try {
-            records = rawRecs.map((e) => CashRecordModel.fromJson(jsonDecode(e))).toList();
-          } catch (_) {}
-        }
-      }
-
-      if (plan.id.isEmpty) {
-        final rawPlan = prefs.getString(_prefPlanKey);
-        if (rawPlan != null) {
-          try {
-            plan = MonthlyBudgetPlanModel.fromJson(jsonDecode(rawPlan));
-          } catch (_) {}
-        }
       }
 
       // Purge any auto-generated salary records that belong to dismissed months or prior to salaryStartMonth
@@ -115,15 +82,12 @@ class BankBudgetNotifier extends StateNotifier<AsyncValue<BankBudgetSummary>> {
       }
       records = cleanedRecords;
 
-      // 3. Automated Monthly Salary Inflow Check
+      // Automated Monthly Salary Inflow Check
       records = await _checkAndApplySalaryInflows(account, records);
 
-      // 4. Calculate full analytics and set state
+      // Calculate full analytics and set state directly
       final summary = _calculateSummary(account, records, plan);
       state = AsyncValue.data(summary);
-
-      // Persist cache locally
-      _saveLocalCache(account, records, plan);
     } catch (e, st) {
       debugPrint('[BankBudgetNotifier] loadData error: $e');
       state = AsyncValue.error(e, st);
@@ -534,23 +498,6 @@ class BankBudgetNotifier extends StateNotifier<AsyncValue<BankBudgetSummary>> {
   ) {
     final summary = _calculateSummary(account, records, plan);
     state = AsyncValue.data(summary);
-    _saveLocalCache(account, records, plan);
-  }
-
-  Future<void> _saveLocalCache(
-    BankAccountModel account,
-    List<CashRecordModel> records,
-    MonthlyBudgetPlanModel plan,
-  ) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefAccountKey, jsonEncode(account.toJson()));
-      await prefs.setStringList(
-        _prefRecordsKey,
-        records.map((r) => jsonEncode(r.toJson())).toList(),
-      );
-      await prefs.setString(_prefPlanKey, jsonEncode(plan.toJson()));
-    } catch (_) {}
   }
 
   Future<void> refresh() async {

@@ -15,6 +15,9 @@ import 'profit_calculator_screen.dart';
 import 'salary_epf_screen.dart';
 import 'transactions_history_screen.dart';
 import 'position_detail_screen.dart';
+import 'crypto_intelligence_screen.dart';
+import '../widgets/realtime_status_badge.dart';
+import '../widgets/skeleton_loading.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -88,6 +91,11 @@ class DashboardScreen extends ConsumerWidget {
           ],
         ),
         actions: [
+          // Realtime Live Streaming Indicator
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+            child: RealtimeStatusBadge(),
+          ),
           // Theme Toggle Button (Dark / Light)
           IconButton(
             tooltip: isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
@@ -112,67 +120,10 @@ class DashboardScreen extends ConsumerWidget {
               ref.read(isBalanceHiddenProvider.notifier).state = !isHidden;
             },
           ),
-          // More Menu Button (Bank Hub, Career & Refresh)
-          PopupMenuButton<String>(
-            tooltip: 'More Services',
-            icon: Icon(Icons.more_vert, color: textSecondary, size: 22),
-            color: surfaceColor,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: AppColors.border(context)),
-            ),
-            onSelected: (val) {
-              if (val == 'bank') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const BankBudgetHubScreen()),
-                );
-              } else if (val == 'career') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SalaryEpfScreen()),
-                );
-              } else if (val == 'refresh') {
-                ref.read(portfolioSummaryProvider.notifier).refresh();
-              }
-            },
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'bank',
-                child: Row(
-                  children: [
-                    Icon(Icons.account_balance_wallet_rounded, color: Color(0xFF3861FB), size: 18),
-                    SizedBox(width: 10),
-                    Text('Bank & Budget Hub', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'career',
-                child: Row(
-                  children: [
-                    Icon(Icons.work_history_rounded, color: Color(0xFF9D7CFF), size: 18),
-                    SizedBox(width: 10),
-                    Text('Career & EPF Tracker', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'refresh',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh, size: 18),
-                    SizedBox(width: 10),
-                    Text('Refresh Portfolio', style: TextStyle(fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
-          ),
         ],
       ),
       body: portfolioAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        loading: () => const DashboardSkeleton(),
         error: (err, _) => Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -203,7 +154,11 @@ class DashboardScreen extends ConsumerWidget {
 
                 // 2. Quick Actions
                 _buildQuickActions(context),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
+
+                // 2.2 Market Intelligence & Wire Banner
+                _buildMarketIntelligenceBanner(context),
+                const SizedBox(height: 14),
 
                 // 2.5 Career, Salary & EPF Banner
                 _buildCareerSalaryEpfBanner(context, ref),
@@ -240,10 +195,12 @@ class DashboardScreen extends ConsumerWidget {
                 const SizedBox(height: 12),
 
                 // 5. Holdings List
-                if (portfolio.holdings.isEmpty)
+                if (portfolio.holdings.where((h) => h.totalQuantity > 0.00000001).isEmpty)
                   _buildEmptyHoldings(context)
                 else
-                  ...portfolio.holdings.map((h) => _buildHoldingTile(context, h, isHidden, currency)),
+                  ...portfolio.holdings
+                      .where((h) => h.totalQuantity > 0.00000001)
+                      .map((h) => _buildHoldingTile(context, h, isHidden, currency)),
               ],
             ),
           );
@@ -303,14 +260,20 @@ class DashboardScreen extends ConsumerWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'NET PORTFOLIO VALUE',
-                style: TextStyle(
-                  color: AppColors.primary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.3,
-                ),
+              const Row(
+                children: [
+                  Text(
+                    'NET PORTFOLIO VALUE',
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.3,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  RealtimeStatusBadge(size: 5.5),
+                ],
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -596,6 +559,96 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarketIntelligenceBanner(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CryptoIntelligenceScreen()),
+        );
+      },
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: isDark
+                ? [const Color(0xFF131D24), const Color(0xFF0F151A)]
+                : [const Color(0xFFF0F9FB), const Color(0xFFE8F4F8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xFF00B4D8).withAlpha(isDark ? 90 : 60),
+            width: 1.2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00B4D8).withAlpha(isDark ? 20 : 8),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00B4D8).withAlpha(35),
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFF00B4D8).withAlpha(90)),
+              ),
+              child: const Icon(Icons.bolt_rounded, color: Color(0xFF00B4D8), size: 19),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Trading Wire & News',
+                        style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00E676).withAlpha(25),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Text('LIVE', style: TextStyle(color: Color(0xFF00E676), fontSize: 8.5, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Macro FED dates, ETF inflows & token unlock alerts',
+                    style: TextStyle(color: textSecondary, fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: textSecondary, size: 20),
+          ],
         ),
       ),
     );

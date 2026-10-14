@@ -4,6 +4,7 @@ import '../core/constants/app_colors.dart';
 import '../core/utils/formatters.dart';
 import '../data/models/employment_model.dart';
 import '../providers/employment_provider.dart';
+import '../widgets/skeleton_loading.dart';
 
 class SalaryEpfScreen extends ConsumerStatefulWidget {
   const SalaryEpfScreen({super.key});
@@ -38,6 +39,11 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'Run Monthly Salary Scheduler (Bank Credit & DCA)',
+            icon: const Icon(Icons.bolt_rounded, color: Color(0xFF00E676)),
+            onPressed: _triggerMonthlySalary,
+          ),
+          IconButton(
             tooltip: 'Add Employment',
             icon: const Icon(Icons.add_business_outlined, color: AppColors.primary),
             onPressed: () => _openJobDialog(context),
@@ -49,7 +55,7 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
         backgroundColor: surfaceColor,
         onRefresh: () => ref.read(employmentListProvider.notifier).refresh(),
         child: employmentsAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+          loading: () => const SalaryEpfSkeleton(),
           error: (err, _) => Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -422,6 +428,56 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
           ),
           const SizedBox(height: 14),
 
+          // Probation Status Banner (if currently under probation)
+          if (job.isInProbation()) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: job.hasEpfEtfDuringProbation ? AppColors.primary.withAlpha(20) : const Color(0xFFF59E0B).withAlpha(20),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: job.hasEpfEtfDuringProbation ? AppColors.primary.withAlpha(80) : const Color(0xFFF59E0B),
+                  width: 1.2,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    job.hasEpfEtfDuringProbation ? Icons.info_outline : Icons.warning_amber_rounded,
+                    color: job.hasEpfEtfDuringProbation ? AppColors.primary : const Color(0xFFF59E0B),
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          job.hasEpfEtfDuringProbation
+                              ? 'Currently on Probation (${job.probationMonths} Mos) • EPF Active'
+                              : 'Currently on Probation • EPF/ETF Exempt (100% Take-Home)',
+                          style: TextStyle(
+                            color: job.hasEpfEtfDuringProbation ? AppColors.primary : const Color(0xFFF59E0B),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          job.hasEpfEtfDuringProbation
+                              ? 'EPF (20%) and ETF (3%) contributions active from join date.'
+                              : 'No 8% EPF deducted. You receive full 100% gross pay until confirmed on ${Formatters.date(job.effectiveProbationEndDate)}.',
+                          style: TextStyle(color: textSecondary, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           // Monthly Breakdown Table
           Container(
             padding: const EdgeInsets.all(14),
@@ -439,15 +495,36 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                   _salaryRow('Gross Salary (Total)', _formatLkr(job.effectiveGrossSalary), textPrimary, textSecondary),
                 ],
                 const SizedBox(height: 6),
-                _salaryRow('Employee EPF (8% of Basic)', '-${_formatLkr(job.monthlyEmployeeEpf8)}', AppColors.loss, textSecondary),
+                _salaryRow(
+                  'Employee EPF (8% of Basic)',
+                  job.isEpfApplicable() ? '-${_formatLkr(job.monthlyEmployeeEpf8)}' : 'Rs. 0.00 (Exempt during probation)',
+                  job.isEpfApplicable() ? AppColors.loss : const Color(0xFFF59E0B),
+                  textSecondary,
+                ),
                 Divider(color: borderColor.withAlpha(60), height: 16),
                 _salaryRow('Real Net Take-Home (Bank)', _formatLkr(job.monthlyNetSalary), AppColors.profit, textPrimary, isBold: true),
                 Divider(color: borderColor.withAlpha(60), height: 16),
-                _salaryRow('Company EPF (12% of Basic)', '+${_formatLkr(job.monthlyEmployerEpf12)}', AppColors.primary, textSecondary),
+                _salaryRow(
+                  'Company EPF (12% of Basic)',
+                  job.isEpfApplicable() ? '+${_formatLkr(job.monthlyEmployerEpf12)}' : 'Rs. 0.00 (Exempt)',
+                  job.isEpfApplicable() ? AppColors.primary : textMuted,
+                  textSecondary,
+                ),
                 const SizedBox(height: 6),
-                _salaryRow('Company ETF (3% of Basic)', '+${_formatLkr(job.monthlyEmployerEtf3)}', AppColors.gold, textSecondary),
+                _salaryRow(
+                  'Company ETF (3% of Basic)',
+                  job.isEpfApplicable() ? '+${_formatLkr(job.monthlyEmployerEtf3)}' : 'Rs. 0.00 (Exempt)',
+                  job.isEpfApplicable() ? AppColors.gold : textMuted,
+                  textSecondary,
+                ),
                 const SizedBox(height: 6),
-                _salaryRow('Total EPF Fund (20% of Basic)', _formatLkr(job.monthlyTotalEpf20), const Color(0xFF9D7CFF), textSecondary, isBold: true),
+                _salaryRow(
+                  'Total EPF Fund (20% of Basic)',
+                  job.isEpfApplicable() ? _formatLkr(job.monthlyTotalEpf20) : 'Rs. 0.00',
+                  job.isEpfApplicable() ? const Color(0xFF9D7CFF) : textMuted,
+                  textSecondary,
+                  isBold: true,
+                ),
               ],
             ),
           ),
@@ -785,6 +862,9 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
     DateTime joinDate = jobToEdit?.startDate ?? DateTime.now();
     DateTime? resignDate = jobToEdit?.endDate;
     bool isCurrentJob = jobToEdit?.isCurrent ?? true;
+    bool isProbation = jobToEdit?.isProbation ?? false;
+    int probationMonths = jobToEdit?.probationMonths ?? 6;
+    bool hasEpfEtfDuringProbation = jobToEdit?.hasEpfEtfDuringProbation ?? true;
 
     showModalBottomSheet(
       context: context,
@@ -795,15 +875,18 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
         builder: (modalCtx, setModalState) {
           final textPrimary = AppColors.textPrimary(modalCtx);
           final textSecondary = AppColors.textSecondary(modalCtx);
+          final textMuted = AppColors.textMuted(modalCtx);
           final borderColor = AppColors.border(modalCtx);
+          final surfaceLight = AppColors.surfaceLight(modalCtx);
 
           final curBasic = double.tryParse(basicSalaryCtrl.text.trim()) ?? 0.0;
           final curAllowance = double.tryParse(allowanceCtrl.text.trim()) ?? 0.0;
           final curGross = curBasic + curAllowance;
-          final curEmpEpf = curBasic * 0.08;
+          final isEpfExempt = isProbation && !hasEpfEtfDuringProbation;
+          final curEmpEpf = isEpfExempt ? 0.0 : curBasic * 0.08;
           final curNet = curGross - curEmpEpf;
-          final curCompEpf = curBasic * 0.12;
-          final curCompEtf = curBasic * 0.03;
+          final curCompEpf = isEpfExempt ? 0.0 : curBasic * 0.12;
+          final curCompEtf = isEpfExempt ? 0.0 : curBasic * 0.03;
 
           return Padding(
             padding: EdgeInsets.only(
@@ -936,6 +1019,184 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                   ),
                   const SizedBox(height: 14),
 
+                  // Probation Period Configuration Card
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isProbation ? AppColors.gold.withAlpha(20) : surfaceLight,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isProbation ? AppColors.gold : borderColor,
+                        width: isProbation ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.verified_user_outlined,
+                              color: isProbation ? AppColors.gold : textSecondary,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Probation Period Setting',
+                                    style: TextStyle(
+                                      color: textPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Configure temporary probation status & EPF policy',
+                                    style: TextStyle(color: textMuted, fontSize: 10.5),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch.adaptive(
+                              value: isProbation,
+                              activeThumbColor: AppColors.gold,
+                              onChanged: (val) {
+                                setModalState(() {
+                                  isProbation = val;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                        if (isProbation) ...[
+                          const SizedBox(height: 10),
+                          Divider(height: 1, color: borderColor.withAlpha(80)),
+                          const SizedBox(height: 10),
+                          // Probation Months Selector
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Probation Duration:',
+                                    style: TextStyle(color: textSecondary, fontSize: 12),
+                                  ),
+                                  Text(
+                                    '$probationMonths Months',
+                                    style: const TextStyle(
+                                      color: AppColors.gold,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [3, 6, 12].map((months) {
+                                  final isSelected = probationMonths == months;
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 2.5),
+                                      child: InkWell(
+                                        onTap: () {
+                                          setModalState(() {
+                                            probationMonths = months;
+                                          });
+                                        },
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(vertical: 7),
+                                          decoration: BoxDecoration(
+                                            color: isSelected ? AppColors.gold : surfaceLight,
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(
+                                              color: isSelected ? AppColors.gold : borderColor,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '$months Mo',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: isSelected ? Colors.black : textPrimary,
+                                              fontSize: 11,
+                                              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          // EPF/ETF during probation toggle
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface(modalCtx),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: borderColor.withAlpha(80)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  hasEpfEtfDuringProbation ? Icons.check_circle : Icons.money_off_csred_rounded,
+                                  color: hasEpfEtfDuringProbation ? AppColors.profit : AppColors.gold,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        hasEpfEtfDuringProbation
+                                            ? 'EPF/ETF Deducted During Probation'
+                                            : 'EPF/ETF Exempt During Probation',
+                                        style: TextStyle(
+                                          color: textPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      Text(
+                                        hasEpfEtfDuringProbation
+                                            ? 'Standard 8% employee deduction applies.'
+                                            : 'No EPF/ETF deducted. Employee takes home 100% gross pay until confirmed.',
+                                        style: TextStyle(
+                                          color: textMuted,
+                                          fontSize: 10.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch.adaptive(
+                                  value: hasEpfEtfDuringProbation,
+                                  activeThumbColor: AppColors.primary,
+                                  onChanged: (val) {
+                                    setModalState(() {
+                                      hasEpfEtfDuringProbation = val;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
                   // Dynamic Live Salary Breakdown Preview
                   if (curBasic > 0) ...[
                     Container(
@@ -961,22 +1222,68 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                                   color: AppColors.profitBg,
                                   borderRadius: BorderRadius.circular(4),
                                 ),
-                                child: const Text('Exact Full Amount', style: TextStyle(color: AppColors.profit, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                                child: Text(
+                                  isEpfExempt ? 'Probation Exempt' : 'Exact Full Amount',
+                                  style: TextStyle(color: isEpfExempt ? AppColors.gold : AppColors.profit, fontSize: 9.5, fontWeight: FontWeight.bold),
+                                ),
                               ),
                             ],
                           ),
+                          if (isEpfExempt) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppColors.gold.withAlpha(30),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.info_outline, size: 14, color: AppColors.gold),
+                                  SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'Probation EPF Exemption Active: Take-home equals 100% Gross Salary',
+                                      style: TextStyle(color: AppColors.gold, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           _salaryRow('Gross Salary (Basic + Allowance)', Formatters.fullLkr(curGross), textPrimary, textSecondary),
                           const SizedBox(height: 4),
-                          _salaryRow('Employee EPF (8% of Basic)', '-${Formatters.fullLkr(curEmpEpf)}', AppColors.loss, textSecondary),
+                          _salaryRow(
+                            isEpfExempt ? 'Employee EPF (Exempt - 0%)' : 'Employee EPF (8% of Basic)',
+                            isEpfExempt ? 'LKR 0 (Exempt)' : '-${Formatters.fullLkr(curEmpEpf)}',
+                            isEpfExempt ? AppColors.gold : AppColors.loss,
+                            textSecondary,
+                          ),
                           Divider(color: borderColor.withAlpha(80), height: 16),
                           _salaryRow('Real Net Take-Home (Bank)', Formatters.fullLkr(curNet), AppColors.profit, textPrimary, isBold: true),
                           Divider(color: borderColor.withAlpha(80), height: 16),
-                          _salaryRow('Company EPF (12% of Basic)', '+${Formatters.fullLkr(curCompEpf)}', AppColors.primary, textSecondary),
+                          _salaryRow(
+                            isEpfExempt ? 'Company EPF (Exempt - 0%)' : 'Company EPF (12% of Basic)',
+                            isEpfExempt ? 'LKR 0 (Exempt)' : '+${Formatters.fullLkr(curCompEpf)}',
+                            AppColors.primary,
+                            textSecondary,
+                          ),
                           const SizedBox(height: 4),
-                          _salaryRow('Company ETF (3% of Basic)', '+${Formatters.fullLkr(curCompEtf)}', AppColors.gold, textSecondary),
+                          _salaryRow(
+                            isEpfExempt ? 'Company ETF (Exempt - 0%)' : 'Company ETF (3% of Basic)',
+                            isEpfExempt ? 'LKR 0 (Exempt)' : '+${Formatters.fullLkr(curCompEtf)}',
+                            AppColors.gold,
+                            textSecondary,
+                          ),
                           const SizedBox(height: 4),
-                          _salaryRow('Total EPF Fund (20% of Basic)', Formatters.fullLkr(curBasic * 0.20), const Color(0xFF9D7CFF), textSecondary, isBold: true),
+                          _salaryRow(
+                            'Total EPF Fund (20% of Basic)',
+                            isEpfExempt ? 'LKR 0 (Exempt)' : Formatters.fullLkr(curBasic * 0.20),
+                            const Color(0xFF9D7CFF),
+                            textSecondary,
+                            isBold: true,
+                          ),
                         ],
                       ),
                     ),
@@ -1102,6 +1409,9 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               startDate: joinDate,
                               endDate: isCurrentJob ? null : resignDate,
                               isCurrent: isCurrentJob,
+                              isProbation: isProbation,
+                              probationMonths: probationMonths,
+                              hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
                               notes: notesCtrl.text.trim(),
                             );
                       } else {
@@ -1115,6 +1425,9 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               startDate: joinDate,
                               endDate: isCurrentJob ? null : resignDate,
                               isCurrent: isCurrentJob,
+                              isProbation: isProbation,
+                              probationMonths: probationMonths,
+                              hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
                               notes: notesCtrl.text.trim(),
                             );
                       }
@@ -1141,6 +1454,115 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
         },
       ),
     );
+  }
+
+  /// Triggers Spring Boot monthly salary scheduler, bank crediting, and DCA allocations
+  Future<void> _triggerMonthlySalary() async {
+    final now = DateTime.now();
+    final currentYearMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface(context),
+        title: Row(
+          children: const [
+            Icon(Icons.bolt_rounded, color: Color(0xFF00E676)),
+            SizedBox(width: 8),
+            Text('Run Salary Engine', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'This will execute the Spring Boot monthly salary engine for $currentYearMonth:\n\n'
+          '• Check probation status & EPF/ETF exemptions\n'
+          '• Calculate precise Take-Home net salary\n'
+          '• Auto-credit funds to Primary Bank Account\n'
+          '• Allocate automated Monthly DCA targets\n\n'
+          'Run salary calculation now?',
+          style: TextStyle(color: AppColors.textSecondary(context), fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: TextStyle(color: AppColors.textMuted(context))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00E676)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Execute Engine', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              SizedBox(width: 12),
+              Text('Processing monthly salary and allocations...'),
+            ],
+          ),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      final result = await ref.read(employmentListProvider.notifier).processMonthlySalary(yearMonth: currentYearMonth);
+      if (mounted) {
+        messenger.clearSnackBars();
+        if (result != null && result['status'] == 'SUCCESS') {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: AppColors.surface(context),
+              title: Row(
+                children: const [
+                  Icon(Icons.check_circle_rounded, color: AppColors.profit),
+                  SizedBox(width: 8),
+                  Text('Salary Credited', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Month: ${result['yearMonth']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Net Pay: ${Formatters.fullLkr((result['netSalary'] as num?)?.toDouble() ?? 0.0)}',
+                    style: const TextStyle(color: AppColors.profit, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Bank Credited: ${result['bankCredited'] == true ? "Yes (${result['targetBankName'] ?? 'Primary Account'})" : "Already Credited"}'),
+                  const SizedBox(height: 4),
+                  Text('DCA Allocations: ${(result['allocations'] as List?)?.length ?? 0} targets executed'),
+                  if (result['message'] != null) ...[
+                    const SizedBox(height: 8),
+                    Text(result['message'].toString(), style: TextStyle(color: AppColors.textMuted(context), fontSize: 11)),
+                  ]
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Done'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(result?['message'] ?? 'Salary processed or already up to date for $currentYearMonth'),
+              backgroundColor: AppColors.primary,
+            ),
+          );
+        }
+      }
+    }
   }
 
   // Dialog: Resign from Job

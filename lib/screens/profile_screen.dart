@@ -8,6 +8,7 @@ import '../providers/security_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/theme_provider.dart';
 import 'auth/auth_screen.dart';
+import '../widgets/skeleton_loading.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -148,9 +149,15 @@ class ProfileScreen extends ConsumerWidget {
               children: [
                 // Real Google Authenticator TOTP Factor
                 mfaStatusAsync.when(
-                  loading: () => const ListTile(
-                    leading: Icon(Icons.security, color: AppColors.primary),
-                    title: Text('Checking 2FA Status...'),
+                  loading: () => const ShimmerEffect(
+                    child: ListTile(
+                      leading: SkeletonBox(width: 40, height: 40, borderRadius: 10),
+                      title: SkeletonBox(width: 140, height: 14),
+                      subtitle: Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: SkeletonBox(width: 200, height: 10),
+                      ),
+                    ),
                   ),
                   error: (e, _) => ListTile(
                     leading: const Icon(Icons.error_outline, color: AppColors.loss),
@@ -539,36 +546,161 @@ class ProfileScreen extends ConsumerWidget {
   void _showCurrencyPickerModal(BuildContext context, WidgetRef ref) {
     final surfaceColor = AppColors.surface(context);
     final textPrimary = AppColors.textPrimary(context);
+    final borderColor = AppColors.border(context);
     final selected = ref.read(currencyProvider);
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: surfaceColor,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Select Display Currency', style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            ...SupportedCurrencies.all.map((c) {
-              final isSelected = c.code == selected.code;
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: isSelected ? AppColors.primaryGlow : AppColors.surfaceLight(context),
-                  child: Text(c.symbol.trim(), style: TextStyle(color: isSelected ? AppColors.primary : textPrimary, fontWeight: FontWeight.bold)),
+      builder: (ctx) => SafeArea(
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.75,
+          ),
+          padding: const EdgeInsets.only(top: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Select Display Currency',
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
                 ),
-                title: Text('${c.name} (${c.code})', style: TextStyle(color: textPrimary, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                trailing: isSelected ? const Icon(Icons.check, color: AppColors.primary) : null,
-                onTap: () {
-                  ref.read(currencyProvider.notifier).setCurrency(c);
-                  Navigator.pop(ctx);
-                },
-              );
-            }),
-          ],
+              ),
+              Divider(color: borderColor, height: 16),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+                  itemCount: SupportedCurrencies.all.length,
+                  separatorBuilder: (context, index) => Divider(color: borderColor.withAlpha(80), height: 1),
+                  itemBuilder: (context, index) {
+                    final c = SupportedCurrencies.all[index];
+                    final isSelected = c.code == selected.code;
+                    final isUsdt = c.code == 'USDT';
+
+                    return Container(
+                      margin: const EdgeInsets.symmetric(vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? (isUsdt ? const Color(0xFF26A17B).withAlpha(18) : AppColors.primary.withAlpha(18))
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        leading: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? (isUsdt ? const Color(0xFF26A17B) : AppColors.primary)
+                                : (isUsdt ? const Color(0xFF26A17B).withAlpha(25) : AppColors.surfaceLight(context)),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected
+                                  ? (isUsdt ? const Color(0xFF26A17B) : AppColors.primary)
+                                  : (isUsdt ? const Color(0xFF26A17B).withAlpha(80) : borderColor),
+                              width: 1.2,
+                            ),
+                          ),
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  isUsdt ? '₮' : c.symbol.trim(),
+                                  style: TextStyle(
+                                    color: isSelected
+                                        ? Colors.white
+                                        : (isUsdt ? const Color(0xFF26A17B) : textPrimary),
+                                    fontSize: isUsdt ? 20 : 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        title: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '${c.name} (${c.code})',
+                                style: TextStyle(
+                                  color: textPrimary,
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                                  fontSize: 14.5,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isUsdt) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF26A17B).withAlpha(25),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: const Color(0xFF26A17B).withAlpha(100), width: 0.8),
+                                ),
+                                child: const Text(
+                                  'BASE STABLECOIN',
+                                  style: TextStyle(
+                                    color: Color(0xFF26A17B),
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            isUsdt
+                                ? 'Pegged 1:1 with USD • Primary Base Currency'
+                                : 'Base Rate: 1 USD ≈ ${c.rateToUsd} ${c.code}',
+                            style: TextStyle(
+                              color: isUsdt ? const Color(0xFF26A17B) : AppColors.textSecondary(context),
+                              fontSize: 11,
+                              fontWeight: isUsdt ? FontWeight.w500 : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check_circle_rounded, color: isUsdt ? const Color(0xFF26A17B) : AppColors.primary, size: 20)
+                            : null,
+                        onTap: () {
+                          ref.read(currencyProvider.notifier).setCurrency(c);
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
