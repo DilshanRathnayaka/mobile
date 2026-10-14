@@ -530,6 +530,8 @@ class SpringBootService {
       'probationMonths': emp.probationMonths,
       'probationEndDate': emp.probationEndDate?.toIso8601String().substring(0, 10),
       'hasEpfEtfDuringProbation': emp.hasEpfEtfDuringProbation,
+      'hasFixedAllowanceDuringProbation': emp.hasFixedAllowanceDuringProbation,
+      'promotionsJson': jsonEncode(emp.promotions.map((p) => p.toJson()).toList()),
     };
     final res = await http.post(url, headers: _headers, body: jsonEncode(payload));
     return res.statusCode == 200;

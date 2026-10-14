@@ -41,6 +41,45 @@ class TransactionModel {
   bool get isLong => type == 'BUY' || type == 'LONG';
   bool get isShort => type == 'SELL' || type == 'SHORT';
 
+  /// True if this transaction represents a P2P fiat trade or merchant operation
+  bool get isP2P {
+    final n = notes.toUpperCase();
+    final nm = (name ?? '').toUpperCase();
+    final t = type.toUpperCase();
+    return t.contains('P2P') ||
+        n.contains('[P2P]') ||
+        n.contains('P2P') ||
+        nm.contains('P2P');
+  }
+
+  /// True if this transaction is a fiat cashflow, bank transfer, deposit, or withdrawal
+  bool get isCashflow {
+    final n = notes.toUpperCase();
+    final nm = (name ?? '').toUpperCase();
+    final t = type.toUpperCase();
+    return isP2P ||
+        t == 'DEPOSIT' ||
+        t == 'WITHDRAWAL' ||
+        t == 'SALARY_DEPOSIT' ||
+        n.contains('[WITHDRAWAL]') ||
+        n.contains('[DEPOSIT]') ||
+        nm.contains('WITHDRAWAL') ||
+        nm.contains('DEPOSIT') ||
+        nm.contains('SALARY INFLOW') ||
+        nm.contains('BANK TRANSFER') ||
+        nm.contains('PROFIT REALIZATION');
+  }
+
+  /// Pure Spot trade: spot exchange BUY or SELL, excluding Futures, P2P, and Cashflow
+  bool get isSpotTrade =>
+      !isFutures &&
+      !isCashflow &&
+      !isP2P &&
+      (type.toUpperCase() == 'BUY' || type.toUpperCase() == 'SELL');
+
+  bool get isSpotBuy => isSpotTrade && type.toUpperCase() == 'BUY';
+  bool get isSpotSell => isSpotTrade && type.toUpperCase() == 'SELL';
+
   factory TransactionModel.fromJson(Map<String, dynamic> json) {
     final lev = (json['leverage'] as num?)?.toDouble() ?? 1.0;
     final total = (json['totalAmount'] ?? json['total_amount'] as num?)?.toDouble() ?? 0.0;

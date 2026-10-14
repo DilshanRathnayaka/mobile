@@ -110,15 +110,17 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
             if (_selectedTypeFilter == 'ALL') {
               matchesType = true;
             } else if (_selectedTypeFilter == 'BUY') {
-              matchesType = tx.type == 'BUY' && !tx.isFutures;
+              matchesType = tx.isSpotBuy;
             } else if (_selectedTypeFilter == 'SELL') {
-              matchesType = tx.type == 'SELL' && !tx.isFutures;
+              matchesType = tx.isSpotSell;
             } else if (_selectedTypeFilter == 'LONG') {
-              matchesType = tx.type == 'LONG' || (tx.type == 'BUY' && tx.isFutures);
+              matchesType = tx.isFutures && (tx.type == 'LONG' || tx.type == 'BUY');
             } else if (_selectedTypeFilter == 'SHORT') {
-              matchesType = tx.type == 'SHORT' || (tx.type == 'SELL' && tx.isFutures);
+              matchesType = tx.isFutures && (tx.type == 'SHORT' || tx.type == 'SELL');
+            } else if (_selectedTypeFilter == 'P2P') {
+              matchesType = tx.isP2P;
             } else if (_selectedTypeFilter == 'DEPOSIT') {
-              matchesType = tx.type == 'DEPOSIT' || tx.type == 'SALARY_DEPOSIT';
+              matchesType = tx.isCashflow && !tx.isP2P;
             } else {
               matchesType = tx.type == _selectedTypeFilter;
             }
@@ -126,8 +128,9 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
             return matchesType && matchesCoin;
           }).toList();
 
-          final totalSellsVolume = allTransactions.where((t) => t.type == 'SELL').fold<double>(0.0, (sum, t) => sum + t.totalAmount);
-          final totalBuysVolume = allTransactions.where((t) => t.type == 'BUY').fold<double>(0.0, (sum, t) => sum + t.totalAmount);
+          final totalSellsVolume = allTransactions.where((t) => t.isSpotSell).fold<double>(0.0, (sum, t) => sum + t.totalAmount);
+          final totalBuysVolume = allTransactions.where((t) => t.isSpotBuy).fold<double>(0.0, (sum, t) => sum + t.totalAmount);
+          final totalP2pVolume = allTransactions.where((t) => t.isP2P).fold<double>(0.0, (sum, t) => sum + t.totalAmount);
 
           return Column(
             children: [
@@ -148,6 +151,8 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                       _typeFilterChip('Futures Long', 'LONG', color: const Color(0xFF00C087)),
                       const SizedBox(width: 8),
                       _typeFilterChip('Futures Short', 'SHORT', color: const Color(0xFFFF4D4F)),
+                      const SizedBox(width: 8),
+                      _typeFilterChip('P2P Orders', 'P2P', color: const Color(0xFFF59E0B)),
                       const SizedBox(width: 8),
                       _typeFilterChip('Deposits', 'DEPOSIT', color: AppColors.gold),
                     ],
@@ -199,7 +204,7 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerRight,
                           child: Text(
-                            'Total Sold: ${Formatters.currency(totalSellsVolume, currency)}',
+                            'Total Spot Sold: ${Formatters.currency(totalSellsVolume, currency)}',
                             style: const TextStyle(color: AppColors.loss, fontSize: 12, fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -212,6 +217,17 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                           child: Text(
                             'Total DCA Capital: ${Formatters.currency(totalBuysVolume, currency)}',
                             style: const TextStyle(color: AppColors.profit, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      )
+                    else if (_selectedTypeFilter == 'P2P')
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            'Total P2P: ${Formatters.currency(totalP2pVolume, currency)}',
+                            style: const TextStyle(color: Color(0xFFF59E0B), fontSize: 12, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ),
@@ -236,13 +252,21 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                           final tx = filteredTransactions[index];
                           final isLong = tx.type == 'LONG' || (tx.type == 'BUY' && tx.isFutures);
                           final isShort = tx.type == 'SHORT' || (tx.type == 'SELL' && tx.isFutures);
-                          final isBuy = tx.type == 'BUY' && !tx.isFutures;
-                          final isSell = tx.type == 'SELL' && !tx.isFutures;
-                          final isSalary = tx.type == 'SALARY_DEPOSIT' || tx.type == 'DEPOSIT';
+                          final isP2p = tx.isP2P;
+                          final isBuy = tx.isSpotBuy;
+                          final isSell = tx.isSpotSell;
+                          final isSalary = tx.type == 'SALARY_DEPOSIT' || (tx.type == 'DEPOSIT' && !isP2p);
 
-                          final color = (isBuy || isLong)
-                              ? AppColors.profit
-                              : (isSalary ? AppColors.gold : AppColors.loss);
+                          final Color color;
+                          if (isP2p) {
+                            color = const Color(0xFFF59E0B);
+                          } else if (isBuy || isLong) {
+                            color = AppColors.profit;
+                          } else if (isSalary) {
+                            color = AppColors.gold;
+                          } else {
+                            color = AppColors.loss;
+                          }
 
                           return InkWell(
                             onTap: () => _showTransactionDetailSheet(context, tx, portfolioAsync, currency),
@@ -253,7 +277,10 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                               decoration: BoxDecoration(
                                 color: surfaceColor,
                                 borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: borderColor),
+                                border: Border.all(
+                                  color: isP2p ? const Color(0xFFF59E0B).withAlpha(80) : borderColor,
+                                  width: isP2p ? 1.2 : 1.0,
+                                ),
                               ),
                               child: Row(
                                 children: [
@@ -265,9 +292,11 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Icon(
-                                      (isBuy || isLong)
-                                          ? Icons.arrow_downward_rounded
-                                          : (isSalary ? Icons.payments_rounded : Icons.arrow_upward_rounded),
+                                      isP2p
+                                          ? Icons.handshake_rounded
+                                          : (isBuy || isLong)
+                                              ? Icons.arrow_downward_rounded
+                                              : (isSalary ? Icons.payments_rounded : Icons.arrow_upward_rounded),
                                       color: color,
                                       size: 18,
                                     ),
@@ -283,7 +312,9 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                           children: [
                                             Flexible(
                                               child: Text(
-                                                isSalary ? 'Cashflow Deposit' : '${tx.type} ${tx.symbol ?? ""}',
+                                                isP2p
+                                                    ? (tx.type == 'BUY' || tx.type == 'DEPOSIT' ? 'P2P Buy' : 'P2P Sell')
+                                                    : (isSalary ? 'Cashflow Deposit' : '${tx.type} ${tx.symbol ?? ""}'),
                                                 style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
@@ -303,6 +334,17 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                                   style: const TextStyle(color: Color(0xFFF0B90B), fontSize: 9, fontWeight: FontWeight.bold),
                                                 ),
                                               ),
+                                            ] else if (isP2p) ...[
+                                              const SizedBox(width: 5),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(0xFFF59E0B).withAlpha(35),
+                                                  borderRadius: BorderRadius.circular(4),
+                                                  border: Border.all(color: const Color(0xFFF59E0B).withAlpha(120), width: 0.8),
+                                                ),
+                                                child: const Text('P2P FIAT', style: TextStyle(color: Color(0xFFF59E0B), fontSize: 9, fontWeight: FontWeight.bold)),
+                                              ),
                                             ] else if (isSell) ...[
                                               const SizedBox(width: 5),
                                               Container(
@@ -311,7 +353,7 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                                   color: AppColors.lossBg,
                                                   borderRadius: BorderRadius.circular(4),
                                                 ),
-                                                child: const Text('SOLD', style: TextStyle(color: AppColors.loss, fontSize: 9, fontWeight: FontWeight.bold)),
+                                                child: const Text('SPOT SOLD', style: TextStyle(color: AppColors.loss, fontSize: 9, fontWeight: FontWeight.bold)),
                                               ),
                                             ],
                                           ],
@@ -338,34 +380,48 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                                   ),
                                   const SizedBox(width: 8),
 
-                                  // Right Amount
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 135),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                  // Right Amount & Action
+                                  Flexible(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.end,
                                       children: [
-                                        FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          alignment: Alignment.centerRight,
-                                          child: Text(
-                                            Formatters.currency(tx.totalAmount, currency),
-                                            style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                                        Flexible(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.end,
+                                            children: [
+                                              FittedBox(
+                                                fit: BoxFit.scaleDown,
+                                                alignment: Alignment.centerRight,
+                                                child: Text(
+                                                  Formatters.currency(tx.totalAmount, currency),
+                                                  style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              if (!isSalary)
+                                                FittedBox(
+                                                  fit: BoxFit.scaleDown,
+                                                  alignment: Alignment.centerRight,
+                                                  child: Text(
+                                                    '${Formatters.cryptoAmount(tx.amount)} @ ${Formatters.currency(tx.pricePerUnit, currency)}',
+                                                    style: TextStyle(color: textSecondary, fontSize: 11),
+                                                  ),
+                                                ),
+                                            ],
                                           ),
                                         ),
-                                        if (!isSalary)
-                                          FittedBox(
-                                            fit: BoxFit.scaleDown,
-                                            alignment: Alignment.centerRight,
-                                            child: Text(
-                                              '${Formatters.cryptoAmount(tx.amount)} @ ${Formatters.currency(tx.pricePerUnit, currency)}',
-                                              style: TextStyle(color: textSecondary, fontSize: 11),
-                                            ),
+                                        const SizedBox(width: 4),
+                                        InkWell(
+                                          borderRadius: BorderRadius.circular(20),
+                                          onTap: () => _confirmDelete(context, tx),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(6.0),
+                                            child: Icon(Icons.delete_outline, color: AppColors.loss.withAlpha(190), size: 19),
                                           ),
+                                        ),
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: 4),
-                                  Icon(Icons.chevron_right, color: textMuted, size: 18),
                                 ],
                               ),
                             ),
@@ -665,28 +721,7 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (dCtx) => AlertDialog(
-                            title: const Text('Delete Transaction?'),
-                            content: const Text('Are you sure you want to permanently delete this transaction record?'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
-                              TextButton(
-                                onPressed: () => Navigator.pop(dCtx, true),
-                                style: TextButton.styleFrom(foregroundColor: AppColors.loss),
-                                child: const Text('Delete'),
-                              ),
-                            ],
-                          ),
-                        );
-
-                        if (confirm == true) {
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          await ref.read(transactionsProvider.notifier).deleteTransaction(tx.id);
-                        }
-                      },
+                      onPressed: () => _confirmDelete(context, tx, parentSheetCtx: ctx),
                       icon: const Icon(Icons.delete_outline, size: 16),
                       label: const Text('Delete', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
@@ -729,5 +764,67 @@ class _TransactionsHistoryScreenState extends ConsumerState<TransactionsHistoryS
         ),
       ],
     );
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    TransactionModel tx, {
+    BuildContext? parentSheetCtx,
+  }) async {
+    final surfaceColor = AppColors.surface(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever_rounded, color: AppColors.loss, size: 24),
+            const SizedBox(width: 8),
+            Text('Delete ${tx.type} Order?', style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to permanently delete this ${Formatters.cryptoAmount(tx.amount)} ${tx.symbol ?? ""} transaction?\n\nYour portfolio holdings and DCA metrics will automatically be recalculated.',
+          style: TextStyle(color: textSecondary, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.loss,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(dCtx, true),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Delete', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      if (parentSheetCtx != null && parentSheetCtx.mounted) {
+        Navigator.pop(parentSheetCtx);
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      final success = await ref.read(transactionsProvider.notifier).deleteTransaction(tx.id);
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(success ? 'Transaction deleted & portfolio updated!' : 'Failed to delete transaction'),
+            backgroundColor: success ? AppColors.profit : AppColors.loss,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 }

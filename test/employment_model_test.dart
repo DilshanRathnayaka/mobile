@@ -201,5 +201,180 @@ void main() {
       expect(completedProbationJob.monthlyEmployeeEpf8, equals(12000.0)); // 8% of 150,000
       expect(completedProbationJob.monthlyNetSalary, equals(138000.0)); // 150,000 - 12,000
     });
+
+    test('Fixed allowance is withheld during probation when hasFixedAllowanceDuringProbation is false', () {
+      final probationNoAllowance = EmploymentModel(
+        id: 'job-probation-no-allowance',
+        userId: 'user-1',
+        companyName: 'Colombo Software Ltd',
+        designation: 'Software Engineer',
+        basicSalary: 100000.0,
+        fixedAllowance: 25000.0, // Permanent allowance: Rs. 25,000
+        monthlySalary: 125000.0,
+        salaryDay: 25,
+        startDate: DateTime.now().subtract(const Duration(days: 30)), // ~1 month in
+        endDate: null,
+        isCurrent: true,
+        isProbation: true,
+        probationMonths: 6,
+        hasEpfEtfDuringProbation: true,
+        hasFixedAllowanceDuringProbation: false, // NOT given in probation!
+      );
+
+      expect(probationNoAllowance.isInProbation(), isTrue);
+      // Fixed allowance during probation should be 0.0
+      expect(probationNoAllowance.effectiveFixedAllowance(), equals(0.0));
+      // Effective gross during probation is only basic pay (100,000)
+      expect(probationNoAllowance.effectiveGrossSalary, equals(100000.0));
+      // EPF 8% of basic = 8,000
+      expect(probationNoAllowance.monthlyEmployeeEpf8, equals(8000.0));
+      // Net pay during probation = 100,000 - 8,000 = 92,000 (no 25k allowance)
+      expect(probationNoAllowance.monthlyNetSalary, equals(92000.0));
+    });
+
+    test('Confirmed employee gets fixed allowance after probation ends even if withheld initially', () {
+      final confirmedJobWithAllowance = EmploymentModel(
+        id: 'job-confirmed-allowance',
+        userId: 'user-1',
+        companyName: 'Colombo Software Ltd',
+        designation: 'Software Engineer',
+        basicSalary: 100000.0,
+        fixedAllowance: 25000.0,
+        monthlySalary: 125000.0,
+        salaryDay: 25,
+        startDate: DateTime.now().subtract(const Duration(days: 210)), // 7 months ago
+        endDate: null,
+        isCurrent: true,
+        isProbation: true,
+        probationMonths: 6, // ended after 6 months
+        hasEpfEtfDuringProbation: true,
+        hasFixedAllowanceDuringProbation: false, // withheld in probation, now permanent!
+      );
+
+      // Now confirmed (past 6 months)
+      expect(confirmedJobWithAllowance.isInProbation(), isFalse);
+      // Allowance is now active
+      expect(confirmedJobWithAllowance.effectiveFixedAllowance(), equals(25000.0));
+      // Gross is now 100,000 + 25,000 = 125,000
+      expect(confirmedJobWithAllowance.effectiveGrossSalary, equals(125000.0));
+      // EPF is still 8% on basic (8,000)
+      expect(confirmedJobWithAllowance.monthlyEmployeeEpf8, equals(8000.0));
+      // Net pay = 125,000 - 8,000 = 117,000 (includes 25k allowance)
+      expect(confirmedJobWithAllowance.monthlyNetSalary, equals(117000.0));
+    });
+
+    test('Lifetime earnings accurately reflects probation months (no allowance) + permanent months (with allowance)', () {
+      final jobResignedAfter10Months = EmploymentModel(
+        id: 'job-10-months',
+        userId: 'user-1',
+        companyName: 'Enterprise Tech',
+        designation: 'Engineer',
+        basicSalary: 100000.0,
+        fixedAllowance: 20000.0,
+        monthlySalary: 120000.0,
+        salaryDay: 25,
+        startDate: DateTime(2023, 1, 1),
+        endDate: DateTime(2023, 11, 1), // exactly 10 months worked
+        isCurrent: false,
+        isProbation: true,
+        probationMonths: 3, // 3 months probation (no allowance), 7 months permanent (with allowance)
+        hasEpfEtfDuringProbation: true,
+        hasFixedAllowanceDuringProbation: false,
+      );
+
+      expect(jobResignedAfter10Months.monthsWorked, equals(10));
+      expect(jobResignedAfter10Months.completedProbationMonths, equals(3));
+      expect(jobResignedAfter10Months.confirmedMonths, equals(7));
+
+      // 3 probation months @ 100k gross = 300k
+      // 7 confirmed months @ 120k gross = 840k
+      // Total lifetime gross = 300k + 840k = 1,140,000
+      expect(jobResignedAfter10Months.lifetimeGrossEarned, equals(1140000.0));
+
+      // Net take-home:
+      // 3 probation months @ (100k - 8k) = 92k * 3 = 276,000
+      // 7 confirmed months @ (120k - 8k) = 112k * 7 = 784,000
+      // Total lifetime net = 276k + 784k = 1,060,000
+      expect(jobResignedAfter10Months.lifetimeNetSalary, equals(1060000.0));
+    });
+
+    test('Promotions upgrade active designation, basic salary, and take-home automatically', () {
+      final pastDate = DateTime.now().subtract(const Duration(days: 120));
+      final promoDate = DateTime.now().subtract(const Duration(days: 30));
+
+      final jobWithPromotion = EmploymentModel(
+        id: 'job-promo-1',
+        userId: 'user-1',
+        companyName: 'Virtusa',
+        designation: 'Associate Software Engineer',
+        basicSalary: 90000.0,
+        fixedAllowance: 15000.0,
+        monthlySalary: 105000.0,
+        salaryDay: 25,
+        startDate: pastDate,
+        endDate: null,
+        isCurrent: true,
+        promotions: [
+          PromotionModel(
+            id: 'promo-1',
+            designation: 'Software Engineer',
+            basicSalary: 140000.0,
+            fixedAllowance: 25000.0,
+            effectiveDate: promoDate,
+            notes: 'Annual performance promotion',
+            createdAt: promoDate,
+          ),
+        ],
+      );
+
+      // Active role reflects the promotion
+      expect(jobWithPromotion.activeDesignation, equals('Software Engineer'));
+      expect(jobWithPromotion.activeBasicSalary, equals(140000.0));
+      expect(jobWithPromotion.activeFixedAllowance, equals(25000.0));
+
+      // EPF 8% is calculated on the new promoted basic pay: 140,000 * 0.08 = 11,200
+      expect(jobWithPromotion.monthlyEmployeeEpf8, equals(11200.0));
+      // Net take home = (140,000 + 25,000) - 11,200 = 153,800
+      expect(jobWithPromotion.monthlyNetSalary, equals(153800.0));
+    });
+
+    test('Future scheduled promotion remains pending and does not prematurely alter active salary', () {
+      final pastDate = DateTime.now().subtract(const Duration(days: 180));
+      final futureDate = DateTime.now().add(const Duration(days: 60)); // 2 months in future
+
+      final jobWithFuturePromo = EmploymentModel(
+        id: 'job-future-promo',
+        userId: 'user-1',
+        companyName: 'Sysco Labs',
+        designation: 'Senior Software Engineer',
+        basicSalary: 200000.0,
+        fixedAllowance: 30000.0,
+        monthlySalary: 230000.0,
+        salaryDay: 25,
+        startDate: pastDate,
+        endDate: null,
+        isCurrent: true,
+        promotions: [
+          PromotionModel(
+            id: 'future-promo-1',
+            designation: 'Associate Tech Lead',
+            basicSalary: 280000.0,
+            fixedAllowance: 50000.0,
+            effectiveDate: futureDate,
+            notes: 'Upcoming Q4 Promotion',
+            createdAt: DateTime.now(),
+          ),
+        ],
+      );
+
+      // Current active designation remains Senior Software Engineer
+      expect(jobWithFuturePromo.activeDesignation, equals('Senior Software Engineer'));
+      expect(jobWithFuturePromo.activeBasicSalary, equals(200000.0));
+      expect(jobWithFuturePromo.monthlyEmployeeEpf8, equals(16000.0));
+
+      // Upcoming promotions list includes the future promotion
+      expect(jobWithFuturePromo.upcomingPromotions.length, equals(1));
+      expect(jobWithFuturePromo.upcomingPromotions.first.designation, equals('Associate Tech Lead'));
+    });
   });
 }

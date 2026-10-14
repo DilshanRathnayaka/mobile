@@ -488,14 +488,23 @@ class SupabaseService {
           'p_original_amount': (data['originalAmount'] as num?)?.toDouble() ?? amount,
           'p_fx_to_base': (data['fxToBase'] as num?)?.toDouble() ?? 1.0,
         });
-        if (res != null && res['success'] == true) {
-          return true;
-        }
+
+        // If RPC executed without error, transaction is committed!
+        return true;
       } catch (rpcErr) {
-        debugPrint('[Supabase] create_trade RPC fallback: $rpcErr');
+        debugPrint('[Supabase] create_trade RPC error: $rpcErr');
+        final errStr = rpcErr.toString().toLowerCase();
+        // If error was validation or inventory violation, fail immediately without fallback
+        if (errStr.contains('inventory violation') || errStr.contains('unauthorized')) {
+          return false;
+        }
+        // Only attempt fallback if RPC function literally does not exist
+        if (!errStr.contains('function') && !errStr.contains('not found') && !errStr.contains('pgrst202')) {
+          return false;
+        }
       }
 
-      // Fallback: standard direct table insert
+      // Fallback: ONLY IF RPC is missing on database
       final total = amount * price;
       await _client!.from('transactions').insert({
         'user_id': currentUser!.id,
@@ -553,11 +562,16 @@ class SupabaseService {
           'p_original_amount': (data['originalAmount'] as num?)?.toDouble() ?? amount,
           'p_fx_to_base': (data['fxToBase'] as num?)?.toDouble() ?? 1.0,
         });
-        if (res != null && res['success'] == true) {
-          return true;
-        }
+        return true;
       } catch (rpcErr) {
-        debugPrint('[Supabase] update_trade RPC fallback: $rpcErr');
+        debugPrint('[Supabase] update_trade RPC error: $rpcErr');
+        final errStr = rpcErr.toString().toLowerCase();
+        if (errStr.contains('inventory violation') || errStr.contains('unauthorized')) {
+          return false;
+        }
+        if (!errStr.contains('function') && !errStr.contains('not found') && !errStr.contains('pgrst202')) {
+          return false;
+        }
       }
 
       // Fallback
@@ -597,11 +611,13 @@ class SupabaseService {
           'p_operation_id': opId,
           'p_tx_id': id,
         });
-        if (res != null && res['success'] == true) {
-          return true;
-        }
+        return true;
       } catch (rpcErr) {
-        debugPrint('[Supabase] delete_trade RPC fallback: $rpcErr');
+        debugPrint('[Supabase] delete_trade RPC error: $rpcErr');
+        final errStr = rpcErr.toString().toLowerCase();
+        if (!errStr.contains('function') && !errStr.contains('not found') && !errStr.contains('pgrst202')) {
+          return false;
+        }
       }
 
       await _client!
@@ -1156,6 +1172,8 @@ class SupabaseService {
     int probationMonths = 3,
     DateTime? probationEndDate,
     bool hasEpfEtfDuringProbation = true,
+    bool hasFixedAllowanceDuringProbation = true,
+    List<PromotionModel> promotions = const [],
   }) async {
     if (AppBackendConfig.isSpringBoot) {
       final bSalary = basicSalary > 0 ? basicSalary : (monthlySalary ?? 0.0);
@@ -1181,6 +1199,8 @@ class SupabaseService {
         probationMonths: probationMonths,
         probationEndDate: probationEndDate,
         hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+        hasFixedAllowanceDuringProbation: hasFixedAllowanceDuringProbation,
+        promotions: promotions,
       );
       final ok = await _springBootService.createEmployment(model);
       return ok ? model : null;
@@ -1223,6 +1243,8 @@ class SupabaseService {
         'probation_months': probationMonths,
         'probation_end_date': probationEndDate?.toIso8601String().split('T').first,
         'has_epf_etf_during_probation': hasEpfEtfDuringProbation,
+        'has_fixed_allowance_during_probation': hasFixedAllowanceDuringProbation,
+        'promotions': promotions.map((p) => p.toJson()).toList(),
       };
 
       await _client!.from('employments').insert(data);
@@ -1245,6 +1267,8 @@ class SupabaseService {
         probationMonths: probationMonths,
         probationEndDate: probationEndDate,
         hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+        hasFixedAllowanceDuringProbation: hasFixedAllowanceDuringProbation,
+        promotions: promotions,
       );
     } catch (e) {
       debugPrint('[Supabase] addEmployment error: $e');
@@ -1269,6 +1293,8 @@ class SupabaseService {
     int probationMonths = 3,
     DateTime? probationEndDate,
     bool hasEpfEtfDuringProbation = true,
+    bool hasFixedAllowanceDuringProbation = true,
+    List<PromotionModel>? promotions,
   }) async {
     if (AppBackendConfig.isSpringBoot) {
       final bSalary = basicSalary > 0 ? basicSalary : (monthlySalary ?? 0.0);
@@ -1294,6 +1320,8 @@ class SupabaseService {
         probationMonths: probationMonths,
         probationEndDate: probationEndDate,
         hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+        hasFixedAllowanceDuringProbation: hasFixedAllowanceDuringProbation,
+        promotions: promotions ?? const [],
       );
       return await _springBootService.createEmployment(model);
     }
@@ -1306,7 +1334,7 @@ class SupabaseService {
           ? (bSalary + fAllowance)
           : (monthlySalary ?? bSalary);
 
-      await _client!.from('employments').update({
+      final updateData = <String, dynamic>{
         'company_name': companyName.trim(),
         'designation': designation.trim(),
         'basic_salary': bSalary,
@@ -1322,12 +1350,45 @@ class SupabaseService {
         'probation_months': probationMonths,
         'probation_end_date': probationEndDate?.toIso8601String().split('T').first,
         'has_epf_etf_during_probation': hasEpfEtfDuringProbation,
+        'has_fixed_allowance_during_probation': hasFixedAllowanceDuringProbation,
         'updated_at': DateTime.now().toIso8601String(),
-      }).eq('id', id).eq('user_id', currentUser!.id);
+      };
+
+      if (promotions != null) {
+        updateData['promotions'] = promotions.map((p) => p.toJson()).toList();
+      }
+
+      await _client!.from('employments').update(updateData).eq('id', id).eq('user_id', currentUser!.id);
 
       return true;
     } catch (e) {
       debugPrint('[Supabase] updateEmployment error: $e');
+      return false;
+    }
+  }
+
+  /// Saves updated promotion history for an employment
+  Future<bool> saveEmploymentPromotions({
+    required EmploymentModel employment,
+  }) async {
+    if (AppBackendConfig.isSpringBoot) {
+      return await _springBootService.createEmployment(employment);
+    }
+    if (_client == null || !isAuthenticated) return false;
+
+    try {
+      await _client!.from('employments').update({
+        'promotions': employment.promotions.map((p) => p.toJson()).toList(),
+        'designation': employment.activeDesignation,
+        'basic_salary': employment.activeBasicSalary,
+        'fixed_allowance': employment.activeFixedAllowance,
+        'monthly_salary': employment.activeBasicSalary + employment.activeFixedAllowance,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', employment.id).eq('user_id', currentUser!.id);
+
+      return true;
+    } catch (e) {
+      debugPrint('[Supabase] saveEmploymentPromotions error: $e');
       return false;
     }
   }
@@ -1595,11 +1656,11 @@ class SupabaseService {
       );
 
       final basicSalary = (activeEmp['basic_salary'] as num?)?.toDouble() ?? 0.0;
-      final fixedAllowance = (activeEmp['fixed_allowance'] as num?)?.toDouble() ?? 0.0;
-      final grossSalary = basicSalary + fixedAllowance;
+      final fullFixedAllowance = (activeEmp['fixed_allowance'] as num?)?.toDouble() ?? 0.0;
 
       final isProbation = activeEmp['is_probation'] == true;
       final hasEpfDuringProbation = activeEmp['has_epf_etf_during_probation'] != false;
+      final hasAllowanceDuringProbation = activeEmp['has_fixed_allowance_during_probation'] != false;
       bool currentlyInProbation = false;
 
       if (isProbation) {
@@ -1621,6 +1682,11 @@ class SupabaseService {
           }
         }
       }
+
+      final effectiveFixedAllowance = (currentlyInProbation && !hasAllowanceDuringProbation)
+          ? 0.0
+          : fullFixedAllowance;
+      final grossSalary = basicSalary + effectiveFixedAllowance;
 
       final deductEpf = !(currentlyInProbation && !hasEpfDuringProbation);
 

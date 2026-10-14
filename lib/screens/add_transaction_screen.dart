@@ -451,6 +451,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   }
 
   Future<void> _submit() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     final parsedAmount = double.tryParse(_amountController.text) ?? 0.0;
@@ -1930,7 +1931,13 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                   lastDate: DateTime.now().add(const Duration(days: 1)),
                 );
                 if (picked != null) {
-                  setState(() => _selectedDate = picked);
+                  final now = DateTime.now();
+                  final isToday = picked.year == now.year && picked.month == now.month && picked.day == now.day;
+                  setState(() {
+                    _selectedDate = isToday
+                        ? now
+                        : DateTime(picked.year, picked.month, picked.day, _selectedDate.hour, _selectedDate.minute, _selectedDate.second);
+                  });
                 }
               },
               child: Container(

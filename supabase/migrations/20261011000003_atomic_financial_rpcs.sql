@@ -49,7 +49,10 @@ BEGIN
         SELECT id, type, amount, price_per_unit, total_amount, fee, transaction_date, created_at
         FROM public.transactions 
         WHERE user_id = p_user_id AND coin_id = p_coin_id AND type IN ('BUY', 'SELL')
-        ORDER BY transaction_date ASC, created_at ASC, id ASC
+        ORDER BY transaction_date ASC, 
+                 CASE WHEN type IN ('BUY', 'LONG') THEN 1 ELSE 2 END ASC, 
+                 created_at ASC, 
+                 id ASC
     LOOP
         IF tx.type = 'BUY' THEN
             v_total_qty := v_total_qty + tx.amount;
@@ -68,11 +71,12 @@ BEGIN
             v_cost_basis := tx.amount * v_avg_price;
             v_realized_pnl := v_realized_pnl + (v_sell_rev - v_cost_basis);
             v_total_qty := GREATEST(0, v_total_qty - tx.amount);
-            v_total_cost := v_total_qty * v_avg_price;
-
-            IF v_total_qty = 0 THEN
+            IF v_total_qty <= 0.00000001 THEN
+                v_total_qty := 0;
                 v_avg_price := 0;
                 v_total_cost := 0;
+            ELSE
+                v_total_cost := v_total_qty * v_avg_price;
             END IF;
         END IF;
     END LOOP;

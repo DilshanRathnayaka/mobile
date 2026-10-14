@@ -49,20 +49,27 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
       }
     }
 
-    final isProfit = liveHolding.unrealizedPnl >= 0;
-    final isClosed = liveHolding.totalQuantity <= 0.00000001;
-
-    // Filter transactions for this coin
+    // Filter transactions for this coin - strictly spot/futures trades, excluding P2P and cashflow
     final allTxs = txAsync.valueOrNull ?? [];
     final coinTxs = allTxs.where((t) {
+      if (t.isP2P || t.isCashflow) return false;
       final sMatch = t.symbol != null && t.symbol!.toUpperCase() == widget.holding.symbol.toUpperCase();
       final idMatch = t.coinId != null && t.coinId == widget.holding.coinId;
       return sMatch || idMatch;
     }).toList();
 
-    // Sort chronologically oldest -> newest to calculate DCA sequence numbers and detect position cycles
+    // Sort chronologically oldest -> newest to calculate DCA sequence numbers and detect position cycles.
+    // If timestamps are equal, process BUY/LONG before SELL/SHORT to maintain inventory validity.
     final chronologicalTxs = List<TransactionModel>.from(coinTxs)
-      ..sort((a, b) => a.transactionDate.compareTo(b.transactionDate));
+      ..sort((a, b) {
+        final dateComp = a.transactionDate.compareTo(b.transactionDate);
+        if (dateComp != 0) return dateComp;
+        final aIsBuy = a.type == 'BUY' || a.type == 'LONG';
+        final bIsBuy = b.type == 'BUY' || b.type == 'LONG';
+        if (aIsBuy && !bIsBuy) return -1;
+        if (!aIsBuy && bIsBuy) return 1;
+        return a.id.compareTo(b.id);
+      });
 
     // Track position cycles: when running quantity returns to 0 (position fully closed/sold),
     // any subsequent buy starts a brand new active trade cycle.
@@ -73,34 +80,42 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
     int cycleBuyCount = 0;
 
     for (final tx in chronologicalTxs) {
-      txCycleMap[tx.id] = cycle;
-
       if (tx.type == 'BUY' || tx.type == 'LONG') {
         cycleBuyCount++;
         dcaIndices[tx.id] = cycleBuyCount;
         runningQty += tx.amount;
+        txCycleMap[tx.id] = cycle;
       } else if (tx.type == 'SELL' || tx.type == 'SHORT') {
-        runningQty -= tx.amount;
-        if (runningQty <= 0.00000001) {
+        txCycleMap[tx.id] = cycle;
+        runningQty = (runningQty - tx.amount).clamp(0.0, double.infinity);
+        final remainingValue = runningQty * (tx.pricePerUnit > 0 ? tx.pricePerUnit : 1.0);
+        // Position fully closed if remaining quantity or remaining fiat value is negligible dust
+        if (runningQty <= 0.001 || remainingValue < 0.20) {
           runningQty = 0.0;
-          // Position fully closed! Next transaction starts a new cycle
+          // Position fully closed! Next transaction starts a fresh cycle
           cycle++;
           cycleBuyCount = 0;
         }
+      } else {
+        txCycleMap[tx.id] = cycle;
       }
     }
 
-    final bool hasActivePosition = runningQty > 0.00000001;
+    final bool hasActivePosition = runningQty > 0.001;
     final int latestCycle = hasActivePosition ? cycle : (cycle > 1 ? cycle - 1 : 1);
     final int activeCycle = latestCycle;
     final bool hasPastCycles = (cycle > 1 && (hasActivePosition || cycle > 2));
-    final bool showAllCycles = _userToggledAllCycles ?? isClosed;
+    final bool showAllCycles = _userToggledAllCycles ?? false;
 
     // Calculate metrics strictly for the active position cycle
     int activeBuyCount = 0;
     double lowestBuyPrice = double.infinity;
     double highestBuyPrice = 0.0;
     double totalFeesPaid = 0.0;
+    double activeQty = 0.0;
+    double activeInvested = 0.0;
+    double activeRealized = 0.0;
+    double activeAvgBuyPrice = 0.0;
 
     final activeCycleTxs = chronologicalTxs.where((t) => txCycleMap[t.id] == activeCycle).toList();
     for (final tx in activeCycleTxs) {
@@ -109,11 +124,50 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
         activeBuyCount++;
         if (tx.pricePerUnit < lowestBuyPrice) lowestBuyPrice = tx.pricePerUnit;
         if (tx.pricePerUnit > highestBuyPrice) highestBuyPrice = tx.pricePerUnit;
+        activeQty += tx.amount;
+        activeInvested += tx.totalAmount + tx.fee;
+        if (activeQty > 0) {
+          activeAvgBuyPrice = activeInvested / activeQty;
+        }
+      } else if (tx.type == 'SELL' || tx.type == 'SHORT') {
+        final sellRev = tx.totalAmount - tx.fee;
+        final costBasis = tx.amount * activeAvgBuyPrice;
+        activeRealized += (sellRev - costBasis);
+        activeQty = (activeQty - tx.amount).clamp(0.0, double.infinity);
+        if (activeQty <= 0.00000001) {
+          activeQty = 0.0;
+          activeInvested = 0.0;
+          activeAvgBuyPrice = 0.0;
+        } else {
+          activeInvested = activeQty * activeAvgBuyPrice;
+        }
       }
     }
 
-    if (lowestBuyPrice == double.infinity) lowestBuyPrice = liveHolding.averageBuyPrice;
-    if (highestBuyPrice == 0.0) highestBuyPrice = liveHolding.averageBuyPrice;
+    if (lowestBuyPrice == double.infinity) lowestBuyPrice = activeAvgBuyPrice > 0 ? activeAvgBuyPrice : liveHolding.averageBuyPrice;
+    if (highestBuyPrice == 0.0) highestBuyPrice = activeAvgBuyPrice > 0 ? activeAvgBuyPrice : liveHolding.averageBuyPrice;
+
+    // Build isolated active display holding vs lifetime holding
+    final double effectiveQty = (!showAllCycles && hasActivePosition) ? activeQty : liveHolding.totalQuantity;
+    final double effectiveInvested = (!showAllCycles && hasActivePosition) ? activeInvested : liveHolding.totalInvestedCost;
+    final double effectiveAvgPrice = (!showAllCycles && hasActivePosition && activeAvgBuyPrice > 0) ? activeAvgBuyPrice : liveHolding.averageBuyPrice;
+    final double effectiveCurrentVal = effectiveQty * liveHolding.currentPrice;
+    final double effectiveUnrealized = effectiveCurrentVal - effectiveInvested;
+    final double effectiveUnrealizedPct = effectiveInvested > 0 ? (effectiveUnrealized / effectiveInvested) * 100 : 0.0;
+    final double effectiveRealized = (!showAllCycles && hasActivePosition) ? activeRealized : liveHolding.realizedPnl;
+
+    final displayHolding = liveHolding.copyWith(
+      totalQuantity: effectiveQty,
+      averageBuyPrice: effectiveAvgPrice,
+      totalInvestedCost: effectiveInvested,
+      currentValue: effectiveCurrentVal,
+      unrealizedPnl: effectiveUnrealized,
+      unrealizedPnlPercentage: effectiveUnrealizedPct,
+      realizedPnl: effectiveRealized,
+    );
+
+    final isProfit = displayHolding.unrealizedPnl >= 0;
+    final isClosed = displayHolding.totalQuantity <= 0.00000001;
 
     // Scope displayed transactions based on whether user wants only the active position or all history
     final scopedTxs = (showAllCycles || !hasActivePosition)
@@ -134,8 +188,8 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
     final sellTxsCount = scopedTxs.where((t) => t.type == 'SELL' || t.type == 'SHORT').length;
 
     // Price deviation from average buy price
-    final avgPrice = liveHolding.averageBuyPrice > 0 ? liveHolding.averageBuyPrice : 1.0;
-    final deviationPct = ((liveHolding.currentPrice - avgPrice) / avgPrice) * 100;
+    final avgPrice = displayHolding.averageBuyPrice > 0 ? displayHolding.averageBuyPrice : 1.0;
+    final deviationPct = ((displayHolding.currentPrice - avgPrice) / avgPrice) * 100;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -149,14 +203,14 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
               backgroundColor: AppColors.primaryGlow,
               radius: 14,
               child: Text(
-                liveHolding.symbol.substring(0, liveHolding.symbol.length > 3 ? 3 : liveHolding.symbol.length),
+                displayHolding.symbol.substring(0, displayHolding.symbol.length > 3 ? 3 : displayHolding.symbol.length),
                 style: const TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                '${liveHolding.name} (${liveHolding.symbol})',
+                '${displayHolding.name} (${displayHolding.symbol})',
                 style: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -170,8 +224,31 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
           IconButton(
             tooltip: 'Add DCA Transaction',
             icon: const Icon(Icons.add_circle_outline, color: AppColors.primary),
-            onPressed: () => _navigateToAdd(context, 'BUY', liveHolding),
+            onPressed: () => _navigateToAdd(context, 'BUY', displayHolding),
           ),
+          if (coinTxs.isNotEmpty)
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: textPrimary),
+              color: surfaceColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onSelected: (val) {
+                if (val == 'clear_all') {
+                  _confirmClearAllCoinTransactions(context, coinTxs, displayHolding.symbol);
+                }
+              },
+              itemBuilder: (ctx) => [
+                PopupMenuItem(
+                  value: 'clear_all',
+                  child: Row(
+                    children: const [
+                      Icon(Icons.delete_sweep_outlined, color: AppColors.loss, size: 20),
+                      SizedBox(width: 8),
+                      Text('Clear All Coin Orders', style: TextStyle(color: AppColors.loss, fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
       body: SingleChildScrollView(
@@ -182,7 +259,7 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
             // 1. Position Hero Analytics Card
             _buildPositionHeroCard(
               context,
-              liveHolding,
+              displayHolding,
               currency,
               isProfit,
               isClosed,
@@ -196,21 +273,23 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
             ),
             const SizedBox(height: 16),
 
-            // 2. DCA Price Range & Execution Breakdown Card
-            _buildDcaRangeCard(
-              context,
-              liveHolding,
-              lowestBuyPrice,
-              highestBuyPrice,
-              totalFeesPaid,
-              currency,
-              surfaceColor,
-              borderColor,
-              textPrimary,
-              textSecondary,
-              textMuted,
-            ),
-            const SizedBox(height: 20),
+            // 2. DCA Price Range & Execution Breakdown Card (only if multiple buys exist in this cycle)
+            if (activeBuyCount > 1) ...[
+              _buildDcaRangeCard(
+                context,
+                displayHolding,
+                lowestBuyPrice,
+                highestBuyPrice,
+                totalFeesPaid,
+                currency,
+                surfaceColor,
+                borderColor,
+                textPrimary,
+                textSecondary,
+                textMuted,
+              ),
+              const SizedBox(height: 20),
+            ],
 
             // 3. Tab Navigation (DCA Buys, Sells, All)
             if (hasPastCycles) ...[
@@ -287,25 +366,29 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
                 Expanded(
                   child: Text(
                     showAllCycles ? 'All Orders History' : 'Current DCA Entries',
-                    style: TextStyle(color: textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: surfaceColor,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: borderColor),
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _tabChip('Buys ($buyTxsCount)', 'DCA_BUYS'),
-                      _tabChip('Sells ($sellTxsCount)', 'SELLS'),
-                      _tabChip('All (${scopedTxs.length})', 'ALL'),
-                    ],
+                const SizedBox(width: 6),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: surfaceColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: borderColor),
+                    ),
+                    padding: const EdgeInsets.all(2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _tabChip('Buys ($buyTxsCount)', 'DCA_BUYS'),
+                        _tabChip('Sells ($sellTxsCount)', 'SELLS'),
+                        _tabChip('All (${scopedTxs.length})', 'ALL'),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -361,7 +444,7 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _buildBottomActionBar(context, liveHolding),
+      bottomNavigationBar: _buildBottomActionBar(context, displayHolding),
     );
   }
 
@@ -371,7 +454,7 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
       onTap: () => setState(() => _activeTab = key),
       borderRadius: BorderRadius.circular(18),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
         decoration: BoxDecoration(
           color: isSelected ? AppColors.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(18),
@@ -762,41 +845,73 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
             // Top Row: Type, DCA Badge, Amount, Total
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: badgeColor.withAlpha(25),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: badgeColor.withAlpha(60)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                Expanded(
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Icon(isBuy ? Icons.arrow_downward : Icons.arrow_upward, color: badgeColor, size: 12),
-                      const SizedBox(width: 4),
-                      Text(
-                        isBuy ? (dcaNumber != null ? 'DCA #$dcaNumber BUY' : 'BUY') : 'SELL ORDER',
-                        style: TextStyle(color: badgeColor, fontWeight: FontWeight.bold, fontSize: 10.5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: badgeColor.withAlpha(25),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: badgeColor.withAlpha(60)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(isBuy ? Icons.arrow_downward : Icons.arrow_upward, color: badgeColor, size: 11),
+                            const SizedBox(width: 3),
+                            Text(
+                              isBuy
+                                  ? (dcaNumber != null && dcaNumber > 1 ? 'DCA #$dcaNumber' : 'ENTRY')
+                                  : 'SELL',
+                              style: TextStyle(color: badgeColor, fontWeight: FontWeight.bold, fontSize: 10),
+                            ),
+                          ],
+                        ),
                       ),
+                      if (isClosedCycle)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withAlpha(35),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey.withAlpha(80), width: 0.8),
+                          ),
+                          child: const Text('CLOSED', style: TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.bold)),
+                        ),
                     ],
                   ),
                 ),
-                if (isClosedCycle) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withAlpha(35),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.grey.withAlpha(80), width: 0.8),
-                    ),
-                    child: const Text('CLOSED CYCLE', style: TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            Formatters.currency(tx.totalAmount, currency),
+                            style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => _confirmDeleteTransaction(context, tx),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: Icon(Icons.delete_outline, color: AppColors.loss.withAlpha(200), size: 18),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-                const Spacer(),
-                Text(
-                  Formatters.currency(tx.totalAmount, currency),
-                  style: TextStyle(color: textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -841,20 +956,22 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text('Trading Fee', style: TextStyle(color: textMuted, fontSize: 10)),
-                    const SizedBox(height: 2),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        tx.fee > 0 ? Formatters.currency(tx.fee, currency) : 'Free / \$0',
-                        style: TextStyle(color: textSecondary, fontSize: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('Trading Fee', style: TextStyle(color: textMuted, fontSize: 10)),
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          tx.fee > 0 ? Formatters.currency(tx.fee, currency) : 'Free / \$0',
+                          style: TextStyle(color: textSecondary, fontSize: 12),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -867,7 +984,7 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
                 const SizedBox(width: 4),
                 Text(dateStr, style: TextStyle(color: textMuted, fontSize: 11)),
                 if (tx.notes.isNotEmpty) ...[
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       '• ${tx.notes}',
@@ -876,7 +993,8 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ],
+                ] else
+                  const Spacer(),
                 const SizedBox(width: 4),
                 Icon(Icons.chevron_right, size: 16, color: textMuted),
               ],
@@ -951,5 +1069,124 @@ class _PositionDetailScreenState extends ConsumerState<PositionDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmDeleteTransaction(BuildContext context, TransactionModel tx) async {
+    final surfaceColor = AppColors.surface(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+
+    final isBuy = tx.type == 'BUY' || tx.type == 'LONG';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever_rounded, color: AppColors.loss, size: 24),
+            const SizedBox(width: 8),
+            Text('Delete ${isBuy ? "BUY" : "SELL"} Order?', style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to permanently delete this ${Formatters.cryptoAmount(tx.amount)} ${tx.symbol ?? widget.holding.symbol} order?\n\nYour portfolio holding and DCA metrics will be automatically recalculated.',
+          style: TextStyle(color: textSecondary, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.loss,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Delete', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      final messenger = ScaffoldMessenger.of(context);
+      final success = await ref.read(transactionsProvider.notifier).deleteTransaction(tx.id);
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(success ? 'Order deleted & DCA recalculated!' : 'Failed to delete transaction'),
+            backgroundColor: success ? AppColors.profit : AppColors.loss,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmClearAllCoinTransactions(
+    BuildContext context,
+    List<TransactionModel> txs,
+    String symbol,
+  ) async {
+    final surfaceColor = AppColors.surface(context);
+    final textPrimary = AppColors.textPrimary(context);
+    final textSecondary = AppColors.textSecondary(context);
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: AppColors.loss, size: 24),
+            const SizedBox(width: 8),
+            Text('Clear All $symbol Orders?', style: TextStyle(color: textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete all ${txs.length} transactions for $symbol?\n\nThis will remove the entire position and reset all related DCA metrics.',
+          style: TextStyle(color: textSecondary, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: TextStyle(color: textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.loss,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete All', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      final messenger = ScaffoldMessenger.of(context);
+      final notifier = ref.read(transactionsProvider.notifier);
+      for (final tx in txs) {
+        await notifier.deleteTransaction(tx.id);
+      }
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('All $symbol orders deleted successfully.'),
+            backgroundColor: AppColors.profit,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    }
   }
 }

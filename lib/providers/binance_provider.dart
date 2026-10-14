@@ -61,7 +61,19 @@ class BinanceTickersNotifier extends StateNotifier<AsyncValue<List<BinanceTicker
   Future<void> fetchTickers() async {
     try {
       final list = await _service.getUsdtTickers();
-      state = AsyncValue.data(list);
+      if (list.isNotEmpty) {
+        state = AsyncValue.data(list);
+        // If returning fallback seed tickers (< 30), auto-poll for live 400+ coins in 2 seconds
+        if (list.length < 30) {
+          Timer(const Duration(seconds: 2), () {
+            if (mounted) fetchTickers();
+          });
+        }
+      } else {
+        Timer(const Duration(seconds: 2), () {
+          if (mounted) fetchTickers();
+        });
+      }
     } catch (e, st) {
       if (!state.hasValue) {
         state = AsyncValue.error(e, st);

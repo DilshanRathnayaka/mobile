@@ -66,3 +66,40 @@ class CurrencyNotifier extends StateNotifier<CurrencyInfo> {
     } catch (_) {}
   }
 }
+
+final depositWithdrawCurrencyProvider =
+    StateNotifierProvider<DepositWithdrawCurrencyNotifier, CurrencyInfo>((ref) {
+  return DepositWithdrawCurrencyNotifier();
+});
+
+class DepositWithdrawCurrencyNotifier extends StateNotifier<CurrencyInfo> {
+  static const _prefKey = 'deposit_withdraw_currency_code';
+
+  DepositWithdrawCurrencyNotifier() : super(SupportedCurrencies.usdt) {
+    _loadCurrency();
+  }
+
+  Future<void> _loadCurrency() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final code = prefs.getString(_prefKey);
+      if (code != null && code.isNotEmpty) {
+        state = SupportedCurrencies.fromCode(code);
+      } else {
+        // Fallback to global currency preference if hub-specific currency hasn't been set yet
+        final globalCode = prefs.getString('selected_currency_code');
+        if (globalCode != null && globalCode.isNotEmpty) {
+          state = SupportedCurrencies.fromCode(globalCode);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setCurrency(CurrencyInfo currency) async {
+    state = currency;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefKey, currency.code);
+    } catch (_) {}
+  }
+}

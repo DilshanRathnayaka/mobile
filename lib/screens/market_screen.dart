@@ -8,6 +8,7 @@ import '../providers/currency_provider.dart';
 import 'add_transaction_screen.dart';
 import 'profit_calculator_screen.dart';
 import 'crypto_intelligence_screen.dart';
+import 'coin_chart_screen.dart';
 import '../widgets/realtime_status_badge.dart';
 import '../widgets/skeleton_loading.dart';
 
@@ -141,11 +142,41 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                 ),
               ),
               data: (tickers) {
+                if (tickers.isEmpty) {
+                  return const Center(
+                    child: MarketSkeleton(),
+                  );
+                }
+
                 final filtered = _applyFilters(tickers);
 
                 if (filtered.isEmpty) {
                   return Center(
-                    child: Text('No coins matching "$_searchQuery"', style: TextStyle(color: textSecondary)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.search_off_rounded, size: 48, color: textMuted),
+                          const SizedBox(height: 12),
+                          Text(
+                            _searchQuery.isNotEmpty
+                                ? 'No coins matching "$_searchQuery"'
+                                : 'No coins found for filter "$_selectedFilter"',
+                            style: TextStyle(color: textSecondary, fontSize: 14),
+                            textAlign: TextAlign.center,
+                          ),
+                          if (_searchQuery.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            TextButton.icon(
+                              onPressed: () => setState(() => _searchQuery = ''),
+                              icon: const Icon(Icons.clear, size: 16),
+                              label: const Text('Clear Search'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   );
                 }
 
@@ -231,6 +262,20 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                                     ),
                                   ),
                                 ],
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.candlestick_chart_rounded, color: Color(0xFF2962FF), size: 22),
+                                tooltip: 'TradingView Chart',
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => CoinChartScreen(coin: coin)),
+                                  );
+                                },
                               ),
                             ],
                           ),
@@ -395,7 +440,30 @@ class _MarketScreenState extends ConsumerState<MarketScreen> {
                 Text('24h Low: ${Formatters.currency(coin.lowPrice)}', style: TextStyle(color: textSecondary, fontSize: 12)),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+
+            // TradingView Live Chart Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2962FF),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => CoinChartScreen(coin: coin)),
+                  );
+                },
+                icon: const Icon(Icons.candlestick_chart_rounded, size: 20),
+                label: const Text('TradingView Live Chart & Indicators', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
+              ),
+            ),
+            const SizedBox(height: 12),
 
             // Action Buttons
             Row(

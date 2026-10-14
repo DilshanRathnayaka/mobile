@@ -401,7 +401,30 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(job.designation, style: TextStyle(color: textSecondary, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            job.activeDesignation,
+                            style: TextStyle(color: textSecondary, fontSize: 13, fontWeight: FontWeight.w500),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (job.activeDesignation != job.designation) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryGlow,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: AppColors.primary.withAlpha(80)),
+                            ),
+                            child: const Text('PROMOTED', style: TextStyle(color: AppColors.primary, fontSize: 8.5, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -465,9 +488,15 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          job.hasEpfEtfDuringProbation
-                              ? 'EPF (20%) and ETF (3%) contributions active from join date.'
-                              : 'No 8% EPF deducted. You receive full 100% gross pay until confirmed on ${Formatters.date(job.effectiveProbationEndDate)}.',
+                          () {
+                            final epfText = job.hasEpfEtfDuringProbation
+                                ? 'EPF (20%) and ETF (3%) contributions active from join date.'
+                                : 'No 8% EPF deducted. You receive full basic pay until confirmed on ${Formatters.date(job.effectiveProbationEndDate)}.';
+                            if (!job.hasFixedAllowanceDuringProbation && job.fixedAllowance > 0) {
+                              return '$epfText Fixed allowance (+${_formatLkr(job.fixedAllowance)}) starts after permanent confirmation.';
+                            }
+                            return epfText;
+                          }(),
                           style: TextStyle(color: textSecondary, fontSize: 11),
                         ),
                       ],
@@ -487,10 +516,13 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
             ),
             child: Column(
               children: [
-                _salaryRow('Basic Salary (EPF Base)', _formatLkr(job.effectiveBasicSalary), textPrimary, textSecondary),
-                if (job.fixedAllowance > 0) ...[
+                _salaryRow('Basic Salary (EPF Base)', _formatLkr(job.activeBasicSalary), textPrimary, textSecondary),
+                if (job.activeFixedAllowance > 0 || job.fixedAllowance > 0) ...[
                   const SizedBox(height: 6),
-                  _salaryRow('Fixed Allowance (Non-EPF)', '+${_formatLkr(job.fixedAllowance)}', AppColors.profit, textSecondary),
+                  if (job.isInProbation() && !job.hasFixedAllowanceDuringProbation)
+                    _salaryRow('Fixed Allowance (Non-EPF)', 'Rs. 0.00 (Permanent Only)', AppColors.gold, textSecondary)
+                  else
+                    _salaryRow('Fixed Allowance (Non-EPF)', '+${_formatLkr(job.activeFixedAllowance)}', AppColors.profit, textSecondary),
                   const SizedBox(height: 6),
                   _salaryRow('Gross Salary (Total)', _formatLkr(job.effectiveGrossSalary), textPrimary, textSecondary),
                 ],
@@ -530,6 +562,10 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
           ),
           const SizedBox(height: 12),
 
+          // 2.1 Career Progression & Promotions Section
+          _buildPromotionsSection(context, job, surfaceColor, borderColor, textPrimary, textSecondary, textMuted),
+          const SizedBox(height: 12),
+
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -558,6 +594,317 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+
+  // 2.1 Career Progression & Promotions Timeline
+  Widget _buildPromotionsSection(
+    BuildContext context,
+    EmploymentModel job,
+    Color surfaceColor,
+    Color borderColor,
+    Color textPrimary,
+    Color textSecondary,
+    Color textMuted,
+  ) {
+    final promotions = job.sortedPromotions;
+    final upcoming = job.upcomingPromotions;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceLight(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor.withAlpha(80)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGlow,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.workspace_premium_outlined,
+                        color: AppColors.primary,
+                        size: 16,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Career Progression',
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            promotions.isEmpty
+                                ? 'Track increments & promotions'
+                                : '${promotions.length} milestone${promotions.length > 1 ? "s" : ""}'
+                                    '${upcoming.isNotEmpty ? " • ${upcoming.length} upcoming" : ""}',
+                            style: TextStyle(color: textMuted, fontSize: 10),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () => _openAddPromotionDialog(context, job),
+                icon: const Icon(Icons.add, size: 13),
+                label: const Text('Add Promo', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          if (promotions.isEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.background(context).withAlpha(120),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: borderColor.withAlpha(70)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.trending_up, color: AppColors.primary.withAlpha(180), size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Expecting a promotion or salary hike in the future? Schedule it here to preview future take-home pay and auto-apply when the date arrives.',
+                      style: TextStyle(color: textSecondary, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            ...promotions.map((p) => _buildPromotionItem(
+                  context,
+                  job,
+                  p,
+                  textPrimary,
+                  textSecondary,
+                  textMuted,
+                  borderColor,
+                )),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPromotionItem(
+    BuildContext context,
+    EmploymentModel job,
+    PromotionModel promo,
+    Color textPrimary,
+    Color textSecondary,
+    Color textMuted,
+    Color borderColor,
+  ) {
+    final isUpcoming = promo.isUpcoming;
+    final isActive = !isUpcoming && (job.activePromotion()?.id == promo.id);
+    final basicDiff = promo.basicSalary - job.basicSalary;
+    final pctHike = job.basicSalary > 0 ? (basicDiff / job.basicSalary) * 100 : 0.0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surface(context),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isUpcoming
+              ? const Color(0xFF3B82F6).withAlpha(120)
+              : isActive
+                  ? AppColors.profit.withAlpha(120)
+                  : borderColor.withAlpha(70),
+          width: (isUpcoming || isActive) ? 1.2 : 1.0,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isUpcoming
+                            ? const Color(0xFF3B82F6).withAlpha(30)
+                            : isActive
+                                ? AppColors.profitBg
+                                : textMuted.withAlpha(25),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isUpcoming
+                                ? Icons.schedule
+                                : isActive
+                                    ? Icons.verified
+                                    : Icons.check_circle_outline,
+                            size: 11,
+                            color: isUpcoming
+                                ? const Color(0xFF3B82F6)
+                                : isActive
+                                    ? AppColors.profit
+                                    : textMuted,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            isUpcoming
+                                ? 'UPCOMING'
+                                : isActive
+                                    ? 'ACTIVE'
+                                    : 'PAST TIER',
+                            style: TextStyle(
+                              color: isUpcoming
+                                  ? const Color(0xFF3B82F6)
+                                  : isActive
+                                      ? AppColors.profit
+                                      : textMuted,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        'Eff: ${Formatters.date(promo.effectiveDate)}',
+                        style: TextStyle(color: textMuted, fontSize: 10),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: Icon(Icons.edit_outlined, size: 15, color: textMuted),
+                    onPressed: () => _openAddPromotionDialog(context, job, promoToEdit: promo),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.delete_outline, size: 15, color: AppColors.loss),
+                    onPressed: () => _confirmDeletePromotion(context, job.id, promo),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      promo.designation,
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (promo.notes.isNotEmpty)
+                      Text(
+                        promo.notes,
+                        style: TextStyle(color: textSecondary, fontSize: 10.5, fontStyle: FontStyle.italic),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _formatLkr(promo.basicSalary),
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (pctHike != 0)
+                    Text(
+                      '${pctHike > 0 ? "+" : ""}${pctHike.toStringAsFixed(1)}% hike',
+                      style: TextStyle(
+                        color: pctHike > 0 ? AppColors.profit : AppColors.loss,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          if (promo.fixedAllowance > 0) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('+ Fixed Allowance', style: TextStyle(color: textMuted, fontSize: 10.5)),
+                Text('+${_formatLkr(promo.fixedAllowance)}', style: TextStyle(color: textSecondary, fontSize: 10.5, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -736,24 +1083,39 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
           const SizedBox(height: 8),
 
           // Actions Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (!isResigned)
-                TextButton(
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 2,
+              runSpacing: 2,
+              children: [
+                TextButton.icon(
                   style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                  onPressed: () => _confirmResign(context, job),
-                  child: const Text('Set Resignation Date', style: TextStyle(color: AppColors.loss, fontSize: 11)),
+                  onPressed: () => _openAddPromotionDialog(context, job),
+                  icon: const Icon(Icons.workspace_premium_outlined, color: AppColors.primary, size: 14),
+                  label: Text(
+                    job.promotions.isEmpty ? '+ Promo' : '${job.promotions.length} Promo${job.promotions.length > 1 ? "s" : ""}',
+                    style: const TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
                 ),
-              IconButton(
-                icon: Icon(Icons.edit_outlined, color: textMuted, size: 16),
-                onPressed: () => _openJobDialog(context, jobToEdit: job),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: AppColors.loss, size: 16),
-                onPressed: () => _confirmDelete(context, job.id),
-              ),
-            ],
+                if (!isResigned)
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: () => _confirmResign(context, job),
+                    child: const Text('Set Resignation Date', style: TextStyle(color: AppColors.loss, fontSize: 11)),
+                  ),
+                IconButton(
+                  icon: Icon(Icons.edit_outlined, color: textMuted, size: 16),
+                  onPressed: () => _openJobDialog(context, jobToEdit: job),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: AppColors.loss, size: 16),
+                  onPressed: () => _confirmDelete(context, job.id),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -865,6 +1227,7 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
     bool isProbation = jobToEdit?.isProbation ?? false;
     int probationMonths = jobToEdit?.probationMonths ?? 6;
     bool hasEpfEtfDuringProbation = jobToEdit?.hasEpfEtfDuringProbation ?? true;
+    bool hasFixedAllowanceDuringProbation = jobToEdit?.hasFixedAllowanceDuringProbation ?? false;
 
     showModalBottomSheet(
       context: context,
@@ -881,7 +1244,8 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
 
           final curBasic = double.tryParse(basicSalaryCtrl.text.trim()) ?? 0.0;
           final curAllowance = double.tryParse(allowanceCtrl.text.trim()) ?? 0.0;
-          final curGross = curBasic + curAllowance;
+          final curProbationAllowance = (isProbation && !hasFixedAllowanceDuringProbation) ? 0.0 : curAllowance;
+          final curGross = curBasic + curProbationAllowance;
           final isEpfExempt = isProbation && !hasEpfEtfDuringProbation;
           final curEmpEpf = isEpfExempt ? 0.0 : curBasic * 0.08;
           final curNet = curGross - curEmpEpf;
@@ -1192,6 +1556,61 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               ],
                             ),
                           ),
+                          const SizedBox(height: 10),
+                          // Fixed Allowance during probation toggle
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface(modalCtx),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: borderColor.withAlpha(80)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  hasFixedAllowanceDuringProbation ? Icons.payments_outlined : Icons.money_off_rounded,
+                                  color: hasFixedAllowanceDuringProbation ? AppColors.profit : AppColors.gold,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        hasFixedAllowanceDuringProbation
+                                            ? 'Fixed Allowance Paid in Probation'
+                                            : 'Allowance Starts After Confirmation',
+                                        style: TextStyle(
+                                          color: textPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      Text(
+                                        hasFixedAllowanceDuringProbation
+                                            ? 'Full fixed allowance is added during probation months.'
+                                            : 'Rs. 0 allowance in probation. Allowance begins only once permanent.',
+                                        style: TextStyle(
+                                          color: textMuted,
+                                          fontSize: 10.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Switch.adaptive(
+                                  value: hasFixedAllowanceDuringProbation,
+                                  activeThumbColor: AppColors.profit,
+                                  onChanged: (val) {
+                                    setModalState(() {
+                                      hasFixedAllowanceDuringProbation = val;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -1251,8 +1670,39 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               ),
                             ),
                           ],
+                          if (isProbation && !hasFixedAllowanceDuringProbation && curAllowance > 0) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppColors.gold.withAlpha(30),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.info_outline, size: 14, color: AppColors.gold),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'Allowance Policy: Rs. ${Formatters.fullLkr(curAllowance)} allowance withheld until permanent confirmation.',
+                                      style: const TextStyle(color: AppColors.gold, fontSize: 10.5, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 10),
-                          _salaryRow('Gross Salary (Basic + Allowance)', Formatters.fullLkr(curGross), textPrimary, textSecondary),
+                          _salaryRow('Basic Salary (EPF Base)', Formatters.fullLkr(curBasic), textPrimary, textSecondary),
+                          if (curAllowance > 0) ...[
+                            const SizedBox(height: 4),
+                            if (isProbation && !hasFixedAllowanceDuringProbation)
+                              _salaryRow('Fixed Allowance (Probation)', 'LKR 0 (Starts Permanent)', AppColors.gold, textSecondary)
+                            else
+                              _salaryRow('Fixed Allowance (Non-EPF)', '+${Formatters.fullLkr(curAllowance)}', AppColors.profit, textSecondary),
+                          ],
+                          const SizedBox(height: 4),
+                          _salaryRow('Gross Salary (Current Period)', Formatters.fullLkr(curGross), textPrimary, textSecondary),
                           const SizedBox(height: 4),
                           _salaryRow(
                             isEpfExempt ? 'Employee EPF (Exempt - 0%)' : 'Employee EPF (8% of Basic)',
@@ -1412,6 +1862,7 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               isProbation: isProbation,
                               probationMonths: probationMonths,
                               hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+                              hasFixedAllowanceDuringProbation: hasFixedAllowanceDuringProbation,
                               notes: notesCtrl.text.trim(),
                             );
                       } else {
@@ -1428,6 +1879,7 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
                               isProbation: isProbation,
                               probationMonths: probationMonths,
                               hasEpfEtfDuringProbation: hasEpfEtfDuringProbation,
+                              hasFixedAllowanceDuringProbation: hasFixedAllowanceDuringProbation,
                               notes: notesCtrl.text.trim(),
                             );
                       }
@@ -1659,6 +2111,508 @@ class _SalaryEpfScreenState extends ConsumerState<SalaryEpfScreen> {
             onPressed: () {
               ref.read(employmentListProvider.notifier).deleteEmployment(id);
               Navigator.pop(ctx);
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Dialog: Add or Edit Promotion / Scheduled Increment
+  void _openAddPromotionDialog(
+    BuildContext context,
+    EmploymentModel job, {
+    PromotionModel? promoToEdit,
+  }) {
+    final designationCtrl = TextEditingController(
+      text: promoToEdit?.designation ?? job.activeDesignation,
+    );
+    final basicSalaryCtrl = TextEditingController(
+      text: promoToEdit != null
+          ? promoToEdit.basicSalary.toStringAsFixed(0)
+          : (job.activeBasicSalary > 0
+              ? job.activeBasicSalary.toStringAsFixed(0)
+              : job.monthlySalary.toStringAsFixed(0)),
+    );
+    final allowanceCtrl = TextEditingController(
+      text: promoToEdit != null
+          ? (promoToEdit.fixedAllowance > 0 ? promoToEdit.fixedAllowance.toStringAsFixed(0) : '')
+          : (job.activeFixedAllowance > 0 ? job.activeFixedAllowance.toStringAsFixed(0) : ''),
+    );
+    final notesCtrl = TextEditingController(text: promoToEdit?.notes ?? '');
+
+    DateTime effectiveDate = promoToEdit?.effectiveDate ?? DateTime.now();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final textPrimary = AppColors.textPrimary(modalCtx);
+          final textSecondary = AppColors.textSecondary(modalCtx);
+          final textMuted = AppColors.textMuted(modalCtx);
+          final borderColor = AppColors.border(modalCtx);
+          final surfaceLight = AppColors.surfaceLight(modalCtx);
+
+          final curBasic = double.tryParse(basicSalaryCtrl.text.trim()) ?? 0.0;
+          final curAllowance = double.tryParse(allowanceCtrl.text.trim()) ?? 0.0;
+          final curGross = curBasic + curAllowance;
+          final curEmpEpf = curBasic * 0.08;
+          final curNet = curGross - curEmpEpf;
+          final curCompEpf = curBasic * 0.12;
+          final curCompEtf = curBasic * 0.03;
+          final curTotalEpf = curBasic * 0.20;
+
+          final baseBasic = promoToEdit != null ? job.basicSalary : job.activeBasicSalary;
+          final diffBasic = curBasic - baseBasic;
+          final hikePct = baseBasic > 0 ? (diffBasic / baseBasic) * 100 : 0.0;
+
+          final now = DateTime.now();
+          final isFutureScheduled = effectiveDate.isAfter(DateTime(now.year, now.month, now.day));
+
+          return Padding(
+            padding: EdgeInsets.only(
+              top: 20,
+              left: 20,
+              right: 20,
+              bottom: MediaQuery.of(modalCtx).viewInsets.bottom + 20,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryGlow,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.workspace_premium_outlined,
+                              color: AppColors.primary,
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            promoToEdit != null ? 'Edit Promotion' : 'Add Promotion / Increment',
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Timing notice: Past vs Future Scheduled
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isFutureScheduled
+                          ? const Color(0xFF3B82F6).withAlpha(20)
+                          : AppColors.profitBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isFutureScheduled
+                            ? const Color(0xFF3B82F6).withAlpha(100)
+                            : AppColors.profit.withAlpha(100),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          isFutureScheduled ? Icons.schedule_rounded : Icons.check_circle_outline,
+                          color: isFutureScheduled ? const Color(0xFF3B82F6) : AppColors.profit,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isFutureScheduled
+                                    ? 'Scheduled Future Promotion / Increment'
+                                    : 'Immediate Active Promotion',
+                                style: TextStyle(
+                                  color: isFutureScheduled
+                                      ? const Color(0xFF3B82F6)
+                                      : AppColors.profit,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                isFutureScheduled
+                                    ? 'This promotion will stay scheduled until ${Formatters.date(effectiveDate)}. On that date, active designation and salary will automatically update.'
+                                    : 'This promotion took effect on ${Formatters.date(effectiveDate)}. Active designation and live slip reflect this increment immediately.',
+                                style: TextStyle(color: textSecondary, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Job Title / New Designation
+                  Text('New Designation / Role Title', style: TextStyle(color: textSecondary, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: designationCtrl,
+                    style: TextStyle(color: textPrimary, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. Senior Software Engineer / Lead / Manager',
+                      hintStyle: TextStyle(color: textMuted),
+                      prefixIcon: const Icon(Icons.badge_outlined, size: 20),
+                      filled: true,
+                      fillColor: surfaceLight,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Effective Date Selector
+                  Text('Effective Promotion Date', style: TextStyle(color: textSecondary, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  InkWell(
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: modalCtx,
+                        initialDate: effectiveDate,
+                        firstDate: job.startDate,
+                        lastDate: DateTime.now().add(const Duration(days: 365 * 10)),
+                      );
+                      if (picked != null) {
+                        setModalState(() => effectiveDate = picked);
+                      }
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: surfaceLight,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: borderColor),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.primary),
+                              const SizedBox(width: 10),
+                              Text(
+                                Formatters.date(effectiveDate),
+                                style: TextStyle(color: textPrimary, fontWeight: FontWeight.bold, fontSize: 14),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: isFutureScheduled ? const Color(0xFF3B82F6).withAlpha(25) : AppColors.profitBg,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isFutureScheduled ? 'Future Date' : 'Past / Today',
+                              style: TextStyle(
+                                color: isFutureScheduled ? const Color(0xFF3B82F6) : AppColors.profit,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Basic Salary & Allowance Inputs
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('New Basic Salary (EPF Base)', style: TextStyle(color: textSecondary, fontSize: 12)),
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: basicSalaryCtrl,
+                              keyboardType: TextInputType.number,
+                              style: TextStyle(color: textPrimary, fontSize: 14, fontWeight: FontWeight.bold),
+                              onChanged: (_) => setModalState(() {}),
+                              decoration: InputDecoration(
+                                prefixText: 'Rs. ',
+                                prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+                                hintText: '250000',
+                                hintStyle: TextStyle(color: textMuted),
+                                filled: true,
+                                fillColor: surfaceLight,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Fixed Allowance (Non-EPF)', style: TextStyle(color: textSecondary, fontSize: 12)),
+                            const SizedBox(height: 6),
+                            TextField(
+                              controller: allowanceCtrl,
+                              keyboardType: TextInputType.number,
+                              style: TextStyle(color: textPrimary, fontSize: 14),
+                              onChanged: (_) => setModalState(() {}),
+                              decoration: InputDecoration(
+                                prefixText: 'Rs. ',
+                                prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+                                hintText: '0',
+                                hintStyle: TextStyle(color: textMuted),
+                                filled: true,
+                                fillColor: surfaceLight,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Reason / Appraisal Notes
+                  Text('Promotion Reason / Notes (Optional)', style: TextStyle(color: textSecondary, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: notesCtrl,
+                    style: TextStyle(color: textPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. Annual Appraisal 2026 / Performance Merit / Team Lead promotion',
+                      hintStyle: TextStyle(color: textMuted),
+                      prefixIcon: const Icon(Icons.notes, size: 20),
+                      filled: true,
+                      fillColor: surfaceLight,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Live Projected Hike & EPF Impact Preview
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: surfaceLight,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.primary.withAlpha(60)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'PROJECTED IMPACT & HIKE',
+                              style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                            if (hikePct != 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: hikePct > 0 ? AppColors.profitBg : AppColors.loss.withAlpha(25),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${hikePct > 0 ? "+" : ""}${hikePct.toStringAsFixed(1)}% Basic Hike',
+                                  style: TextStyle(
+                                    color: hikePct > 0 ? AppColors.profit : AppColors.loss,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        _salaryRow('New Gross Earnings', _formatLkr(curGross), textPrimary, textSecondary),
+                        const SizedBox(height: 4),
+                        _salaryRow('Employee EPF (8%)', '-${_formatLkr(curEmpEpf)}', AppColors.loss, textSecondary),
+                        Divider(color: borderColor.withAlpha(80), height: 14),
+                        _salaryRow('Projected Net Take-Home', _formatLkr(curNet), AppColors.profit, textPrimary, isBold: true),
+                        Divider(color: borderColor.withAlpha(80), height: 14),
+                        _salaryRow('Company EPF (12%)', '+${_formatLkr(curCompEpf)}', AppColors.primary, textSecondary),
+                        const SizedBox(height: 4),
+                        _salaryRow('Company ETF (3%)', '+${_formatLkr(curCompEtf)}', AppColors.gold, textSecondary),
+                        const SizedBox(height: 4),
+                        _salaryRow('Total EPF Monthly Fund (20%)', _formatLkr(curTotalEpf), const Color(0xFF9D7CFF), textSecondary, isBold: true),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Confirm / Save Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () async {
+                        final desig = designationCtrl.text.trim();
+                        final basic = double.tryParse(basicSalaryCtrl.text.trim()) ?? 0.0;
+                        final allowance = double.tryParse(allowanceCtrl.text.trim()) ?? 0.0;
+                        final notes = notesCtrl.text.trim();
+
+                        if (desig.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter designation / role title.')),
+                          );
+                          return;
+                        }
+
+                        if (basic <= 0) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter a valid basic salary.')),
+                          );
+                          return;
+                        }
+
+                        final messenger = ScaffoldMessenger.of(context);
+                        final nav = Navigator.of(ctx);
+
+                        bool ok;
+                        if (promoToEdit != null) {
+                          final updated = promoToEdit.copyWith(
+                            designation: desig,
+                            basicSalary: basic,
+                            fixedAllowance: allowance,
+                            effectiveDate: effectiveDate,
+                            notes: notes,
+                          );
+                          ok = await ref.read(employmentListProvider.notifier).updatePromotion(
+                                employmentId: job.id,
+                                promotion: updated,
+                              );
+                        } else {
+                          ok = await ref.read(employmentListProvider.notifier).addPromotion(
+                                employmentId: job.id,
+                                designation: desig,
+                                basicSalary: basic,
+                                fixedAllowance: allowance,
+                                effectiveDate: effectiveDate,
+                                notes: notes,
+                              );
+                        }
+
+                        if (ctx.mounted) {
+                          nav.pop();
+                        }
+
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(ok
+                                ? (isFutureScheduled
+                                    ? 'Promotion scheduled for ${Formatters.date(effectiveDate)}!'
+                                    : 'Promotion saved and activated!')
+                                : 'Failed to save promotion. Please try again.'),
+                            backgroundColor: ok ? AppColors.profit : AppColors.loss,
+                          ),
+                        );
+                      },
+                      child: Text(
+                        promoToEdit != null ? 'Update Promotion' : (isFutureScheduled ? 'Schedule Promotion' : 'Apply Promotion'),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Dialog: Confirm Delete Promotion
+  void _confirmDeletePromotion(
+    BuildContext context,
+    String employmentId,
+    PromotionModel promo,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface(context),
+        title: Text('Delete Promotion', style: TextStyle(color: AppColors.textPrimary(context), fontWeight: FontWeight.bold)),
+        content: Text(
+          'Are you sure you want to delete the promotion milestone "${promo.designation}" (${_formatLkr(promo.basicSalary)}) effective ${Formatters.date(promo.effectiveDate)}?',
+          style: TextStyle(color: AppColors.textSecondary(context), fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary(context))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.loss),
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final nav = Navigator.of(ctx);
+
+              final ok = await ref.read(employmentListProvider.notifier).deletePromotion(
+                    employmentId: employmentId,
+                    promotionId: promo.id,
+                  );
+
+              if (ctx.mounted) {
+                nav.pop();
+              }
+
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(ok ? 'Promotion deleted.' : 'Failed to delete promotion.'),
+                  backgroundColor: ok ? AppColors.profit : AppColors.loss,
+                ),
+              );
             },
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),

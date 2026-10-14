@@ -19,13 +19,11 @@ class DepositWithdrawScreen extends ConsumerStatefulWidget {
 
 class _DepositWithdrawScreenState extends ConsumerState<DepositWithdrawScreen> {
   String _selectedFilter = 'ALL'; // 'ALL', 'DEPOSIT', 'WITHDRAWAL', 'P2P'
-  CurrencyInfo? _screenCurrency;
 
   @override
   Widget build(BuildContext context) {
     final cashflow = ref.watch(cashflowProvider);
-    final globalCurrency = ref.watch(currencyProvider);
-    final currency = _screenCurrency ?? globalCurrency;
+    final currency = ref.watch(depositWithdrawCurrencyProvider);
 
     final bgColor = AppColors.background(context);
     final surfaceColor = AppColors.surface(context);
@@ -968,9 +966,7 @@ class _DepositWithdrawScreenState extends ConsumerState<DepositWithdrawScreen> {
                               ? Icon(Icons.check_circle_rounded, color: isUsdt ? const Color(0xFF26A17B) : AppColors.primary, size: 20)
                               : null,
                           onTap: () {
-                            setState(() {
-                              _screenCurrency = c;
-                            });
+                            ref.read(depositWithdrawCurrencyProvider.notifier).setCurrency(c);
                             Navigator.pop(ctx);
                           },
                         ),
@@ -992,7 +988,7 @@ class _DepositWithdrawScreenState extends ConsumerState<DepositWithdrawScreen> {
     CashflowItem? itemToEdit,
     bool defaultP2P = false,
   }) {
-    final CurrencyInfo activeCurrency = _screenCurrency ?? ref.read(currencyProvider);
+    final CurrencyInfo activeCurrency = ref.read(depositWithdrawCurrencyProvider);
     final isDeposit = type == 'DEPOSIT';
 
     final amountCtrl = TextEditingController(text: itemToEdit != null ? itemToEdit.amount.toString() : '');
